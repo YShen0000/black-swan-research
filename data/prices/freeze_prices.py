@@ -2,9 +2,11 @@
 
     python data/prices/freeze_prices.py
 
-close_SP100.csv          split + dividend adjusted close (what yfinance auto_adjust returns). Use for returns / risk.
-nominal_close_SP100.csv  the price actually quoted that day. Use when comparing with a dollar figure
-                         from that day, e.g. optdata P_fwd (analyst target price).
+close_SP100.csv.gz          split + dividend adjusted close (what yfinance auto_adjust returns). Use for returns / risk
+                            and Swan Beta.
+nominal_close_SP100.csv.gz  the price actually quoted that day. Use when comparing with a dollar figure
+                            from that day, e.g. optdata P_fwd (analyst target price).
+Universe: every ticker in the S&P100 Swan Beta files, plus ^OEX, ^GSPC, SPY. History from 1962 (or listing) to the run date.
 """
 from datetime import date
 from pathlib import Path
@@ -14,18 +16,18 @@ import yfinance as yf
 
 HERE = Path(__file__).parent
 DATA = HERE.parent
-START, END = "2019-01-01", "2025-01-01"   # ponytail: covers Swan9 / Swan10D / Swan11 on S&P100; add S&P500 when researched
+START, END = "1962-01-01", str(date.today())   # ponytail: S&P100 universe only; add S&P500 when it's researched
 
 tickers = set()
 for f in ["SwanBeta/All_SwanBeta100.xlsx", "SwanBeta/All_SwanBeta100_MVO2.xlsx"]:
     tickers |= set(pd.read_excel(DATA / f, index_col=0).index.dropna().astype(str))
-tickers = sorted(tickers) + ["^OEX", "SPY"]
+tickers = sorted(tickers) + ["^OEX", "^GSPC", "SPY"]
 RENAMED = {"BK": "BNY"}  # Yahoo serves the old history under the new ticker
 
 
 def download(ts):
-    # up to today: Yahoo back-adjusts "Close" for every split up to today, so we need all of them to undo it
-    px = yf.download([RENAMED.get(t, t) for t in ts], start=START, end=str(date.today()),
+    # Yahoo back-adjusts "Close" for every split up to today; END = today, so all of them are undone below
+    px = yf.download([RENAMED.get(t, t) for t in ts], start=START, end=END,
                      auto_adjust=False, actions=True, progress=False)
     return px.rename(columns={v: k for k, v in RENAMED.items()}, level=1)
 
@@ -38,12 +40,12 @@ for _ in range(3):  # Yahoo drops random tickers under load; retry the empty one
 
 splits = px["Stock Splits"].reindex(columns=tickers).fillna(0).replace(0, 1)
 later_splits = splits[::-1].cumprod()[::-1].shift(-1).fillna(1)   # product of the splits after each day
-out = {"close_SP100.csv": px["Adj Close"], "nominal_close_SP100.csv": px["Close"].reindex(columns=tickers) * later_splits}
+out = {"close_SP100.csv.gz": px["Adj Close"], "nominal_close_SP100.csv.gz": px["Close"].reindex(columns=tickers) * later_splits}
 for name, df in out.items():
-    df = df.reindex(columns=tickers).loc[:pd.Timestamp(END) - pd.Timedelta(days=1)]
+    df = df.reindex(columns=tickers).dropna(how="all")
     df.index = pd.to_datetime(df.index).date
     df.index.name = "Date"
-    df.round(6).to_csv(HERE / name)
+    df.to_csv(HERE / name, float_format="%.8g")   # significant digits: 1960s adjusted prices are ~0.01
 
-close = out["close_SP100.csv"].reindex(columns=tickers)
-print(close.loc[:END].shape, "missing:", [t for t in tickers if close[t].isna().all()])  # WBA, AVG: delisted
+close = out["close_SP100.csv.gz"].reindex(columns=tickers)
+print(close.shape, close.index[0], close.index[-1], "missing:", [t for t in tickers if close[t].isna().all()])  # WBA, AVG: delisted

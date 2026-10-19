@@ -24,7 +24,7 @@ OFFLINE = f'''
 import functools
 from sklearn.cluster import KMeans as _KMeans
 KMeans = functools.partial(_KMeans, n_init=10)
-_PX = pd.read_csv({str(mvo2.DATA / "prices/close_SP100.csv")!r}, index_col=0, parse_dates=True)
+_PX = pd.read_csv({str(mvo2.DATA / "prices/close_SP100.csv.gz")!r}, index_col=0, parse_dates=True)
 def _download(t, start, end, **kw):
     t = [t] if isinstance(t, str) else list(t)
     return pd.concat({{"Close": _PX.loc[start:end - pd.Timedelta(days=1)].reindex(columns=sorted(t))}}, axis=1)

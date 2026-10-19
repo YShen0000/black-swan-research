@@ -29,8 +29,8 @@ SWAN9 = dict(   # predict Swan9 (COVID) from Swan4..Swan8, S&P100
 
 # ---------- data ----------
 
-CLOSE = pd.read_csv(DATA / "prices/close_SP100.csv", index_col=0, parse_dates=True)            # split+dividend adjusted
-NOMINAL = pd.read_csv(DATA / "prices/nominal_close_SP100.csv", index_col=0, parse_dates=True)  # price quoted that day
+CLOSE = pd.read_csv(DATA / "prices/close_SP100.csv.gz", index_col=0, parse_dates=True)            # split+dividend adjusted
+NOMINAL = pd.read_csv(DATA / "prices/nominal_close_SP100.csv.gz", index_col=0, parse_dates=True)  # price quoted that day
 
 
 def get_close(tickers, start, end, prices=CLOSE):
