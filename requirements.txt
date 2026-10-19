@@ -1,0 +1,11 @@
+# tested with Python 3.13; works on pandas 2.3 and 3.0
+pandas==2.3.3
+numpy==1.26.4
+scikit-learn==1.9.1
+PyPortfolioOpt==1.5.5
+openpyxl==3.1.5
+arch==8.0.0
+statsmodels==0.15.0
+yfinance==1.7.0   # only for data/prices/freeze_prices.py
+nbconvert==7.17.2
+ipykernel==7.4.0

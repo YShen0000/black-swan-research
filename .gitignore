@@ -10,3 +10,6 @@ __pycache__/
 .env
 .venv/
 venv/
+
+# Notebook outputs
+output/

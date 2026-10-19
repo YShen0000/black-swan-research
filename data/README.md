@@ -1,4 +1,4 @@
 - This folder contains all the data you might need for running MVO. 
 - They are categorized based on their functions.
 - If you are doing the training, use All_SwanBeta100_MVO2 and optdata_MVO2.
-- When you are running the code, you may download all the data, put them together and upload all of them to colab if that can save your time in picking the required files for every different run.
+- When you are running the code, you may download all the data, put them together and upload all of them to colab if that can save your time in picking the required files for every different run.- `prices/` holds frozen Yahoo prices (adjusted and nominal) for the S&P 100, 2019–2024. Rebuild them with `python data/prices/freeze_prices.py`.

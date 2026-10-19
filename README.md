@@ -57,6 +57,7 @@ flowchart LR
 | 🧪 [`Projects/Gradient Matrix Test`](Projects/Gradient%20Matrix%20Test) | Gradient-matrix tests: how the results move with the number of clusters (K = 5–8) for Swan9 on the S&P 100 (OEX), and for Swan10d |
 | 🤖 [`Projects/Automated Testing Scripts`](Projects/Automated%20Testing%20Scripts) | Automated S&P 100 / S&P 500 runs and gradient tests using actual betas |
 | 〰️ [`dtw_result/`](dtw_result) | DTW-clustered MVO for Swan4–8, with injected results and the preselected stocks |
+| 🔧 [`v2/`](v2) | Fixed, function-based MVO2 baseline plus a side-by-side comparison with the original notebook. The bugs and data notes are listed in its README |
 | 💾 [`data/`](data) | Swan Betas, Holt estimates, MVO components (market drops, adjusted prices, weights) and `optdata` |
 
 ## 🚀 Getting started
