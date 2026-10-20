@@ -9,6 +9,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/mvo2.py      # Swan9 baseline -> v2/output/, asserts reference PR 0.2225
 .venv/bin/python v2/compare.py   # original notebook vs v2 on the same frozen data
 .venv/bin/python v2/swan_beta.py # recompute every Swan Beta from prices, check it against All_SwanBeta100.xlsx
+.venv/bin/python v2/walkforward.py  # predict Swan5..Swan11 one by one from the 5 swans before each
 ```
 
 | File | What |
@@ -16,6 +17,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `mvo2.py` | MVO 2.0 as one function per step; `run(params)` returns stats, weights, curves and PR |
 | `compare.py` | runs the original `training/MVO` notebook offline next to v2 and prints weights / PR side by side |
 | `swan_beta.py` | Swan Beta matrix and swan market stats (DD, T1, T2) from `data/swans.csv` and the frozen prices |
+| `walkforward.py` | walk-forward test over Swan5–Swan11 on the unified data, with and without analyst targets |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
 
@@ -26,6 +28,36 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | post-allocation: equal | 0.2117 | 0.2117 | 0.2220 |
 | post-allocation: adjusted proportion | 0.1839 | 0.2195 | 0.2081 |
 | post-allocation: direct | 0.1663 | 0.2031 | 0.2081 |
+
+## Unified data (used by `walkforward.py`)
+- Swan Beta and MarketDD (DD, T1, T2) are computed by `swan_beta.py` from `data/swans.csv` and the frozen prices, replacing the two beta Excel files and `MarketDD.xlsx`. In `mvo2.run`, `beta_file=None` and `marketdd_file=None` select them; `mvo2.SWAN9` still uses the original files for comparison.
+- Universe: when a swan has optdata, the tickers in it (roughly the index on that date); otherwise every ticker with price history. This is survivorship-biased for the early swans, because only companies that still exist today are in the price file.
+- Without analyst targets (`optdata_file=None`), the expected return is the past-year trend `R_60`, floored at 0.
+- **Predicted-swan length.** With a consistent T2 (days for the index to regain its prior peak), T1 + T2 is longer than the ~282-day look-back for every target. In the original data it already was for Swan5–7, which is why only Swan8 onward were ever run. The recovery is now compressed to end on the window's last day; the depth is unchanged. When it fits (e.g. `SWAN9`), nothing changes.
+- When max-Sharpe has no solution (e.g. in 2008 only OXY beats the 1% rf), the optimizer falls back to min volatility. The rf is compared with `E_2/100` = return-per-drawdown ÷ 100, a unit mismatch inherited from the original.
+
+## Walk-forward: each swan predicted from the 5 before it (S&P 100, K-means N=7, w1=0.17)
+
+| target | variant | PR | PR equal-wt preselection | portfolio actual β | full-cycle excess* |
+|---|---|---|---|---|---|
+| Swan5 2008 | no P_fwd | 0.285 | 0.352 | 0.715 | +6.0% |
+| Swan6 2011 | no P_fwd | 0.906 | 0.760 | 0.094 | +8.0% |
+| Swan7 2015 | no P_fwd | 0.197 | 0.345 | 0.803 | +10.5% |
+| Swan8 2018 | no P_fwd | 0.577 | 0.817 | 0.423 | +7.8% |
+| Swan9 2020 | no P_fwd | 0.263 | 0.191 | 0.739 | −2.5% |
+| | P_fwd (look-ahead) | 0.225 | 0.191 | 0.777 | −3.8% |
+| | original input files | 0.222 | 0.182 | 0.777 | −3.8% |
+| Swan10D 2022 | no P_fwd | 0.787 | 0.616 | 0.213 | +20.2% |
+| | P_fwd | 0.629 | 0.616 | 0.371 | +4.8% |
+| Swan11 2025 (out of sample) | no P_fwd | 0.678 | 0.773 | 0.295 | −4.3% |
+| | P_fwd | 0.679 | 0.773 | 0.295 | −2.0% |
+
+\* Portfolio minus index return, from the portfolio date until the index is back at its pre-crash peak.
+
+- The predicted portfolio β is about 0.41–0.46 every time; the actual β ranges from 0.09 to 0.80.
+- Without P_fwd: mean PR 0.527. Equal-weighting the preselected stocks instead gives 0.550, and MVO beats it in only 3 of 7 swans.
+- Analyst targets never helped: worse on Swan9 and Swan10D, a tie on Swan11.
+- Seven events is a small sample. Treat these numbers as a baseline to compare upgrades against, not as proof.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).

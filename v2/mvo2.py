@@ -13,12 +13,16 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from pypfopt import EfficientFrontier
+from pypfopt.exceptions import OptimizationError
 from sklearn.cluster import KMeans
+
+import swan_beta
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 
-SWAN9 = dict(   # predict Swan9 (COVID) from Swan4..Swan8, S&P100
-    beta_file="SwanBeta/All_SwanBeta100_MVO2.xlsx", optdata_file="optdata/optdata_MVO2.xlsx", optdata_sheet=1,
+SWAN9 = dict(   # predict Swan9 (COVID) from Swan4..Swan8, S&P100, on the original input files (reference PR 0.2225)
+    beta_file="SwanBeta/All_SwanBeta100_MVO2.xlsx", marketdd_file="MVO_Components/MarketDD.xlsx",
+    optdata_file="optdata/optdata_MVO2.xlsx", optdata_sheet=1,
     start_swan="Swan4", end_swan="Swan8",
     start=datetime.datetime(2019, 1, 1), end=datetime.datetime(2020, 2, 15),                       # look-back window
     start_swan_date=datetime.datetime(2020, 2, 15), end_swan_date=datetime.datetime(2021, 3, 23),  # evaluation window
@@ -39,9 +43,26 @@ def get_close(tickers, start, end, prices=CLOSE):
 
 
 def load_betas(beta_file, start_swan, end_swan):
-    betas = pd.read_excel(DATA / beta_file, index_col=0)
+    """Swan Beta table: an original Excel file, or (None) computed from data/swans.csv + prices."""
+    betas = swan_beta.swan_betas() if beta_file is None else pd.read_excel(DATA / beta_file, index_col=0)
     window = betas.loc[:, start_swan:end_swan]
     return betas[window.isna().sum(axis=1) < window.shape[1] - 1]   # keep stocks with at least 2 betas in the window
+
+
+def load_marketdd(marketdd_file):
+    """Per-swan DD / T1 / T2: the original MarketDD.xlsx, or (None) computed from data/swans.csv + prices."""
+    if marketdd_file is None:
+        return swan_beta.market_stats()
+    return pd.read_excel(DATA / marketdd_file, index_col=0).rename(columns={"Actual DD": "DD"})
+
+
+def load_optdata(optdata_file, sheet=0):
+    """Analyst targets (P_fwd) per ticker, or None to run without them."""
+    if optdata_file is None:
+        return None
+    if optdata_file.endswith(".csv"):
+        return pd.read_csv(DATA / optdata_file, index_col=0)
+    return pd.read_excel(DATA / optdata_file, index_col=0, sheet_name=sheet)
 
 
 def swan_weights(betas, end_swan):
@@ -68,14 +89,17 @@ def preselect_kmeans(betas, start_swan, end_swan, N, min_size=10, seed=1):
 
 # ---------- step 2: inject the predicted swan into the look-back prices ----------
 
-def predicted_market_drop(total_days, end_swan, swan_w):
-    """Linear fall over T1 days, log recovery over T2 days, then 0 (T1 correlation-weighted, T2 / DD plain means)."""
-    m = pd.read_excel(DATA / "MVO_Components/MarketDD.xlsx", index_col=0).loc[:end_swan]
-    t1 = int((m["T1"].values * swan_w.values).sum())
-    t2 = int(round(m["T2"].mean(), 0))
-    dd = m["Actual DD"].mean()
+def predicted_market_drop(total_days, marketdd, swan_w):
+    """Linear fall over T1 days, log recovery over T2 days, then 0 (T1 correlation-weighted, T2 / DD plain means).
+
+    `marketdd` holds the past swans (Swan1..end_swan). If T1 + T2 is longer than the look-back window, the recovery
+    is compressed to end on the window's last day: same depth, and the latest prices (used for returns) stay clean.
+    """
+    m = marketdd.loc[swan_w.index]
+    t1 = int((m["T1"] * swan_w).sum())
+    t2 = min(int(round(m["T2"].mean(), 0)), total_days - t1)
+    dd = m["DD"].mean()
     t0 = total_days - t1 - t2
-    assert t0 >= 0, f"look-back window ({total_days} days) shorter than predicted swan ({t1}+{t2} days)"
     base = (t2 + 1) ** (1 / (dd * 100))
     md = [round(dd / (t1 - 1) * i, 4) for i in range(t1)]
     md += [round(dd - math.log(i + 2, base) / 100, 4) for i in range(t2)]
@@ -96,20 +120,26 @@ def max_drawdown(returns):
 
 
 def estimate(prices, end, optdata, MA_days):
-    """Per-stock forward return estimate, 1y max drawdown, weekly vol, and the annualised weekly covariance."""
+    """Per-stock forward return estimate, 1y max drawdown, weekly vol, and the annualised weekly covariance.
+
+    With optdata: analyst target bounded by the past year's trend. Without (optdata None): the trend alone.
+    """
     one_year_ago = prices.index[prices.index <= end - datetime.timedelta(days=365)][-1]
     half_year_ago = prices.index[prices.index <= end - datetime.timedelta(days=182)][-1]
     ma = prices.rolling(MA_days).mean().dropna().loc[one_year_ago:]
     ma_now, ma_1y, ma_half = ma.iloc[-1], ma.iloc[0], ma.loc[half_year_ago]
 
-    # optdata P_fwd is a dollar target quoted at `end`; prices are adjusted back from today -> compare nominal prices
-    to_nominal = NOMINAL.loc[:end].iloc[-1] / CLOSE.loc[:end].iloc[-1]
-    r_fwd = optdata.P_fwd.loc[ma_now.index] / (ma_now * to_nominal[ma_now.index]) - 1
     r_60 = ma_now / ma_1y - 1
     r_60_half = ma_now / ma_half - 1
-    # trust the analyst target only when it is roughly in line with the past year's trend
-    r = pd.Series(np.select([r_fwd < 0.5 * r_60, r_fwd > 1.3 * r_60],
-                            [r_60_half, np.maximum(1.3 * r_60, 0.7 * r_fwd)], r_fwd), index=r_fwd.index).clip(lower=0)
+    if optdata is None:
+        r = r_60.clip(lower=0)
+    else:
+        # P_fwd is a dollar target quoted at `end`; prices are adjusted back from today -> compare nominal prices
+        to_nominal = NOMINAL.loc[:end].iloc[-1] / CLOSE.loc[:end].iloc[-1]
+        r_fwd = pd.to_numeric(optdata.P_fwd, errors="coerce").loc[ma_now.index] / (ma_now * to_nominal[ma_now.index]) - 1
+        # trust the analyst target only when it is roughly in line with the past year's trend
+        r = pd.Series(np.select([r_fwd < 0.5 * r_60, r_fwd > 1.3 * r_60],
+                                [r_60_half, np.maximum(1.3 * r_60, 0.7 * r_fwd)], r_fwd), index=r_fwd.index).clip(lower=0)
 
     week = pd.to_datetime(prices.index).strftime("%W").values
     week_end = np.where(week != np.roll(week, 1))[0][1:] - 1
@@ -125,11 +155,18 @@ def estimate(prices, end, optdata, MA_days):
 # ---------- step 4: optimisation ----------
 
 def optimize(expected, cov, w1, min_weight, rf=0.01):
-    ef = EfficientFrontier(expected, cov, weight_bounds=(0, w1))
-    ef.max_sharpe(rf)
+    """Max Sharpe; if it has no solution (too few stocks beat rf under the w1 cap, e.g. before 2008), min volatility."""
+    try:
+        ef = EfficientFrontier(expected, cov, weight_bounds=(0, w1))
+        ef.max_sharpe(rf)
+        method = "max_sharpe"
+    except (ValueError, OptimizationError):
+        ef = EfficientFrontier(expected, cov, weight_bounds=(0, w1))
+        ef.min_volatility()
+        method = "min_volatility"
     w = pd.Series(ef.clean_weights())
     w = w[w >= min_weight]
-    return w / w.sum()   # ponytail: renormalising can push a weight a bit over w1 (0.17 -> 0.175), as in the original
+    return w / w.sum(), method   # ponytail: renormalising can push a weight a bit over w1 (0.17 -> 0.175), as in the original
 
 
 # ---------- step 5: post-allocation ----------
@@ -167,28 +204,34 @@ def evaluate(weights, start_swan_date, end_swan_date, benchmark, crash_peak, cra
 # ---------- pipeline ----------
 
 def run(p=SWAN9, out=None):
+    """p: dict like SWAN9. beta_file / marketdd_file / optdata_file None -> computed betas / computed MarketDD / no P_fwd.
+    universe (optional): tickers allowed into preselection."""
     betas = load_betas(p["beta_file"], p["start_swan"], p["end_swan"])
+    if p.get("universe") is not None:
+        betas = betas[betas.index.isin(p["universe"])]
     beta = preselect_kmeans(betas, p["start_swan"], p["end_swan"], p["N"])
 
     prices = get_close(beta.index, p["start"], p["end"]).dropna(how="all", axis=1)
     dropped = sorted(set(beta.index) - set(prices.columns))   # no price data (e.g. WBA, delisted from Yahoo)
     beta = beta[prices.columns]
-    md = predicted_market_drop(len(prices), p["end_swan"], swan_weights(betas, p["end_swan"]))
+    swan_w = swan_weights(betas, p["end_swan"])
+    md = predicted_market_drop(len(prices), load_marketdd(p["marketdd_file"]), swan_w)
     shocked = inject(prices, beta, md)
 
-    optdata = pd.read_excel(DATA / p["optdata_file"], index_col=0, sheet_name=p["optdata_sheet"])
+    optdata = load_optdata(p["optdata_file"], p.get("optdata_sheet", 0))
     stats, cov = estimate(shocked, p["end"], optdata, p["MA_days"])
     stats["beta"] = beta
     stats["PR"] = 1 - beta
     stats["SR"] = stats.Rfwd_adjusted / stats.std_f
     stats["PR_SR"] = stats.PR * stats.SR ** 0.5
 
-    weights = optimize(stats.Rfwd_adjusted / stats.Fall_MDD / 100, cov, p["w1"], p["min_weight"])
+    weights, method = optimize(stats.Rfwd_adjusted / stats.Fall_MDD / 100, cov, p["w1"], p["min_weight"])
     alloc = post_allocation(weights, stats.PR_SR)
     window = (p["start_swan_date"], p["end_swan_date"], p["benchmark"], p["crash_peak"], p["crash_trough"])
     curves = {c: evaluate(alloc[c], *window) for c in alloc.columns}
-    res = dict(stats=stats, weights=weights, market_drop=md, allocation=alloc, dropped=dropped,
-               curve=curves["weight"][0], PR=curves["weight"][1], PR_by_allocation={c: v[1] for c, v in curves.items()})
+    res = dict(stats=stats, weights=weights, optimizer=method, market_drop=md, allocation=alloc, dropped=dropped,
+               curve=curves["weight"][0], PR=curves["weight"][1], PR_by_allocation={c: v[1] for c, v in curves.items()},
+               PR_preselect_equal=evaluate(pd.Series(1 / len(beta), index=beta.index), *window)[1])
     if out:
         out = Path(out)
         out.mkdir(exist_ok=True)

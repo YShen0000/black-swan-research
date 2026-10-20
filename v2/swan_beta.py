@@ -43,7 +43,8 @@ def market_stats(prices=CLOSE, swans=SWANS):
 if __name__ == "__main__":
     stored = pd.read_excel(DATA / "SwanBeta/All_SwanBeta100.xlsx", index_col=0)
     ours = swan_betas()
-    err = (ours.reindex(stored.index) - stored[ours.columns]).abs()
+    both = ours.columns.intersection(stored.columns)   # swans added after the original files have nothing to check against
+    err = (ours.reindex(stored.index)[both] - stored[both]).abs()
     print("max |recomputed - stored| per swan:", err.max().round(5).to_dict())
     assert (err.max() < 1e-3).all(), "Swan Beta no longer reproduces All_SwanBeta100.xlsx"
 
