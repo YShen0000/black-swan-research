@@ -192,7 +192,7 @@ Style exposures are z-scored and clipped at ±3. Factor returns come from a dail
 |---|---|---|---|---|
 | mean \|log(realised / predicted)\| (lower = better) | **0.31** | 0.34 | **0.32** | 0.35 |
 | rank correlation, predicted vs realised | **0.59** | 0.55 | **0.52** | 0.47 |
-| realised / predicted for the min-variance portfolio | **0.94** | 1.04 | 0.94 | 0.99 |
+| realised / predicted for the portfolio optimised on the sample covariance | **0.94** | 1.04 | 0.94 | 0.99 |
 
 The factor model forecasts better. In particular, it does not understate the risk of an optimised portfolio the way the sample covariance does (ratio > 1 = more risk than predicted).
 
@@ -204,7 +204,7 @@ The factor model forecasts better. In particular, it does not understate the ris
 | same stocks, factor ERC | 0.69–0.71 | 9.4–9.6% | 14.4–14.5% | 40–42% | 0.59 | 0.56–0.58 | 0.10–0.13 | 1.5 | 30 |
 | same stocks, factor min-var | 0.69–0.71 | 8.9–9.2% | 13.6–13.7% | 41–42% | 0.54–0.55 | 0.59–0.61 | 0.13–0.20 | 2.6 | 23 |
 | same stocks, sample min-var | 0.67–0.69 | 8.7–8.8% | 13.6–13.7% | 41% | 0.54 | 0.58–0.61 | 0.11–0.21 | 2.7 | 18 |
-| all candidates, factor min-var | 0.65–0.68 | 8.2–8.5% | 13.4–13.6% | 41–43% | 0.60–0.62 | 0.38–0.41 | −0.02–0.13 | 2.5 | 62 |
+| all candidates, factor min-var | 0.64–0.68 | 8.2–8.5% | 13.4–13.6% | 41–43% | 0.60–0.62 | 0.38–0.41 | −0.02–0.13 | 2.5 | 62 |
 | all candidates, factor min-var, predicted swan β ≤ 0.5 | 0.66–0.70 | 8.4–9.0% | 13.5–13.7% | 41–42% | 0.60 | 0.45–0.47 | −0.02–0.14 | 2.3 | 52 |
 | SPY (incl. dividends) | 0.64–0.65 | 10.7–10.8% | 18.6% | 55% | 0.99 | 0.02 | 0.01 | – | – |
 
@@ -213,7 +213,7 @@ The factor model forecasts better. In particular, it does not understate the ris
 | **recommended (inverse vol)** | 0.77–0.79 | 10.7–11.0% | 37–41% | 0.60 | 0.53–0.55 | 0.01–0.07 | 1.0 |
 | same stocks, factor ERC | 0.77–0.80 | 10.7–11.1% | 38–42% | 0.61 | 0.52–0.54 | 0.01–0.07 | 1.0 |
 | same stocks, factor min-var | 0.69–0.72 | 9.2–9.5% | 40–43% | 0.58 | 0.50–0.52 | −0.04–0.05 | 1.9 |
-| same stocks, sample min-var | 0.71–0.74 | 9.4–9.8% | 40–42% | 0.58 | 0.51–0.53 | −0.07–0.00 | 1.9 |
+| same stocks, sample min-var | 0.70–0.74 | 9.4–9.8% | 40–42% | 0.58 | 0.50–0.53 | −0.07–0.00 | 1.9 |
 | all candidates, factor min-var | 0.75–0.76 | 10.0–10.1% | 39–40% | 0.65 | 0.38–0.40 | −0.12–0.01 | 1.7 |
 
 **Conclusions**
