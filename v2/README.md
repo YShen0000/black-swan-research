@@ -16,6 +16,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/experiments.py SP500      # component grid on point-in-time S&P500 members (~45 min, cached after)
 .venv/bin/python v2/components.py SP500 2026-10-01   # recommended holdings on a date (default: last price date)
 .venv/bin/python v2/robustness.py SP500       # number of stocks, sector cap, rebalance frequency, cost (~45 min, cached after)
+.venv/bin/python v2/risk_model.py             # factor risk model smoke test
+.venv/bin/python v2/factor_experiment.py SP500   # factor risk model in the weighting step vs the recommended setup
 ```
 
 | File | What |
@@ -28,6 +30,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `components.py` | swappable parts: point-in-time universe, beta forecasters (swan mean, market beta, blend, ridge, random forest), selection, weighting (equal, inverse vol, min vol, MVO); `recommended()` |
 | `experiments.py` | forecaster test on Swan5–Swan11 and the full forecaster × weighting backtest grid |
 | `robustness.py` | the recommended setup across stock counts, sector caps, rebalance frequencies and costs; its sector weights |
+| `risk_model.py` | Barra-style factor risk model from prices: market beta, sectors, size, momentum, volatility; ERC weights |
+| `factor_experiment.py` | risk-forecast accuracy (factor vs sample covariance) and factor-model weightings vs the recommended setup |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
 
@@ -167,6 +171,55 @@ S&P100 (n = 10–30): Sharpe 0.77–0.82, PR mean 0.51–0.62.
 The original's S&P500 return is higher (11.6–12.9% vs 9.4% quarterly), but it swings with the start month and in 2 of 3 cases it lost *more* than the index in one swan. That is what 7 concentrated stocks look like. The capped blend gives the same result whichever month it starts.
 
 **Recommendation:** blend beta → lowest 30 (S&P500) / 20 (S&P100) → inverse vol → 25% sector cap → quarterly rebalance. Expect roughly the market's return minus 1%/yr on S&P500 (SPY 10.8%, this 9.4–9.9%), beta ~0.57, max drawdown ~40% instead of 55%, and less loss than the index in every swan.
+
+## Factor risk model
+
+`risk_model.py` builds Σ = X F Xᵀ + D on each date from prices only, using data before that date:
+
+| factor | exposure |
+|---|---|
+| market | 1-year daily beta to the benchmark |
+| sectors | one 0/1 column per sector (`data/universe/sectors.csv`) |
+| size | log of 3-month average dollar volume. Yahoo has no shares-outstanding history, and dollar volume tracks market cap. |
+| momentum | 12-month return skipping the last month |
+| volatility | 1-year daily volatility |
+
+Style exposures are z-scored and clipped at ±3. Factor returns come from a daily cross-sectional regression over the past year. F and the specific variances D are exponentially weighted (half-life 90 days), and D has a floor.
+
+**Does it forecast risk better?** At each month-end it predicts the volatility of several portfolios (the strategy's, equal weight, 10 random 20/30-stock ones). That prediction is compared with the realised volatility over the next 3 months:
+
+| | S&P500 factor | S&P500 sample cov | S&P100 factor | S&P100 sample cov |
+|---|---|---|---|---|
+| mean \|log(realised / predicted)\| (lower = better) | **0.31** | 0.34 | **0.32** | 0.35 |
+| rank correlation, predicted vs realised | **0.59** | 0.55 | **0.52** | 0.47 |
+| realised / predicted for the min-variance portfolio | **0.94** | 1.04 | 0.94 | 0.99 |
+
+The factor model forecasts better. In particular, it does not understate the risk of an optimised portfolio the way the sample covariance does (ratio > 1 = more risk than predicted).
+
+**Does it improve the portfolio?** `factor_experiment.py`: the same selection weighted differently, plus whole-universe optimisers. Quarterly rebalance, 0.3% cost; the ranges are over the 3 possible start months.
+
+| S&P500 point-in-time | Sharpe | CAGR | vol | max DD | beta | PR mean | PR worst | turnover/yr | holdings |
+|---|---|---|---|---|---|---|---|---|---|
+| **recommended (inverse vol)** | 0.70–0.71 | 9.5–9.6% | 14.4–14.6% | 40% | 0.58 | 0.59–0.60 | 0.10–0.13 | 1.5 | 30 |
+| same stocks, factor ERC | 0.69–0.71 | 9.4–9.6% | 14.4–14.5% | 40–42% | 0.59 | 0.56–0.58 | 0.10–0.13 | 1.5 | 30 |
+| same stocks, factor min-var | 0.69–0.71 | 8.9–9.2% | 13.6–13.7% | 41–42% | 0.54–0.55 | 0.59–0.61 | 0.13–0.20 | 2.6 | 23 |
+| same stocks, sample min-var | 0.67–0.69 | 8.7–8.8% | 13.6–13.7% | 41% | 0.54 | 0.58–0.61 | 0.11–0.21 | 2.7 | 18 |
+| all candidates, factor min-var | 0.65–0.68 | 8.2–8.5% | 13.4–13.6% | 41–43% | 0.60–0.62 | 0.38–0.41 | −0.02–0.13 | 2.5 | 62 |
+| all candidates, factor min-var, predicted swan β ≤ 0.5 | 0.66–0.70 | 8.4–9.0% | 13.5–13.7% | 41–42% | 0.60 | 0.45–0.47 | −0.02–0.14 | 2.3 | 52 |
+| SPY (incl. dividends) | 0.64–0.65 | 10.7–10.8% | 18.6% | 55% | 0.99 | 0.02 | 0.01 | – | – |
+
+| S&P100 | Sharpe | CAGR | max DD | beta | PR mean | PR worst | turnover/yr |
+|---|---|---|---|---|---|---|---|
+| **recommended (inverse vol)** | 0.77–0.79 | 10.7–11.0% | 37–41% | 0.60 | 0.53–0.55 | 0.01–0.07 | 1.0 |
+| same stocks, factor ERC | 0.77–0.80 | 10.7–11.1% | 38–42% | 0.61 | 0.52–0.54 | 0.01–0.07 | 1.0 |
+| same stocks, factor min-var | 0.69–0.72 | 9.2–9.5% | 40–43% | 0.58 | 0.50–0.52 | −0.04–0.05 | 1.9 |
+| same stocks, sample min-var | 0.71–0.74 | 9.4–9.8% | 40–42% | 0.58 | 0.51–0.53 | −0.07–0.00 | 1.9 |
+| all candidates, factor min-var | 0.75–0.76 | 10.0–10.1% | 39–40% | 0.65 | 0.38–0.40 | −0.12–0.01 | 1.7 |
+
+**Conclusions**
+- **Keep inverse-vol weighting.** No factor-model weighting is better in both universes. ERC gives the same result as inverse vol, since 30 defensive stocks have similar correlations. Factor min-variance lowers volatility (13.6% vs 14.4%) and beta on S&P500 at the same Sharpe, but with 70% more turnover and fewer names, and it is worse on S&P100.
+- **The swan-beta selection adds something a generic low-risk portfolio does not.** Minimum variance over all candidates under the factor model, the textbook low-volatility portfolio, has about the same volatility but clearly less crash protection: PR mean 0.38–0.47 vs 0.59, and it lost more than the index in a swan. Adding the predicted swan-beta constraint recovers part of the gap. Picking stocks by how they fell in past crashes is not the same as picking the least volatile ones.
+- **Use the risk model to measure, not to weight.** It forecasts portfolio risk better than the sample covariance and does not understate an optimised portfolio's risk. That makes it the right tool for risk reports, for checking the portfolio's factor exposures, and for any future optimiser.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
