@@ -178,6 +178,13 @@ def weigh(kind, beta, t, universe, ctx, cap=0.17):
         vol = np.sqrt(np.diag(weekly_cov(t, tickers, universe)))
         w = pd.Series(1 / vol, index=tickers)
         return w / w.sum()
+    if kind == "hrp":           # Hierarchical Risk Parity (López de Prado), pypfopt, on 1 year of daily returns
+        from pypfopt import HRPOpt
+        r = mvo2.get_close(tickers, t - YEAR, t, swan_beta.load_prices(universe)).ffill().bfill().pct_change().iloc[1:]
+        w = pd.Series(HRPOpt(r).optimize())
+        return w / w.sum()
+    if kind == "herc":
+        return herc(weekly_cov(t, tickers, universe))
     if kind == "min_vol":
         ef = EfficientFrontier(None, weekly_cov(t, tickers, universe), weight_bounds=(0, max(cap, 1.5 / len(tickers))))
         ef.min_volatility()
@@ -191,6 +198,29 @@ def weigh(kind, beta, t, universe, ctx, cap=0.17):
         stats, cov = mvo2.estimate(mvo2.inject(prices, beta.clip(lower=0), md), t, None, 30, universe)
         return mvo2.optimize(stats.Rfwd_adjusted / stats.Fall_MDD / 100, cov, cap, 0.03)[0]
     raise ValueError(kind)
+
+
+def herc(cov, max_k=8):
+    """Hierarchical Equal Risk Contribution (Raffinot), flat version: cluster the stocks on correlation distance
+    (Ward), pick the cluster count by silhouette, weight clusters by 1 / cluster volatility and stocks inside a
+    cluster by inverse variance. ponytail: one level instead of the paper's recursive split; add it if HERC wins."""
+    from scipy.cluster.hierarchy import fcluster, linkage
+    from scipy.spatial.distance import squareform
+    from sklearn.metrics import silhouette_score
+    sd = np.sqrt(np.diag(cov))
+    dist = np.sqrt(np.clip(0.5 * (1 - cov.values / np.outer(sd, sd)), 0, None))
+    np.fill_diagonal(dist, 0)
+    Z = linkage(squareform(dist, checks=False), "ward")
+    ks = range(2, min(max_k, len(cov) - 1) + 1)
+    labels = max((fcluster(Z, k, "maxclust") for k in ks),
+                 key=lambda lab: silhouette_score(dist, lab, metric="precomputed") if len(set(lab)) > 1 else -1)
+    w = pd.Series(0.0, index=cov.index)
+    for c in set(labels):
+        idx = cov.index[labels == c]
+        inner = 1 / np.diag(cov.loc[idx, idx])
+        inner /= inner.sum()
+        w[idx] = inner / np.sqrt(inner @ cov.loc[idx, idx].values @ inner)
+    return w / w.sum()
 
 
 # set by experiments.setup(): swan list and beta matrix per universe

@@ -18,6 +18,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/robustness.py SP500       # number of stocks, sector cap, rebalance frequency, cost (~45 min, cached after)
 .venv/bin/python v2/risk_model.py             # factor risk model smoke test
 .venv/bin/python v2/factor_experiment.py SP500   # factor risk model in the weighting step vs the recommended setup
+.venv/bin/python v2/explore.py SP500             # every preselection (K-means, DBI, DTW, Holt, ...) x weighting (HRP, HERC, ...)
 ```
 
 | File | What |
@@ -32,6 +33,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `robustness.py` | the recommended setup across stock counts, sector caps, rebalance frequencies and costs; its sector weights |
 | `risk_model.py` | Barra-style factor risk model from prices: market beta, sectors, size, momentum, volatility; ERC weights |
 | `factor_experiment.py` | risk-forecast accuracy (factor vs sample covariance) and factor-model weightings vs the recommended setup |
+| `preselect.py` | the team's preselection methods (K-means, MVO DB's DBI voting, DTW clustering, Holt) plus a Barra-feature ridge forecaster |
+| `explore.py` | which component matters: preselection test at each swan, preselection × weighting grid, random controls |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
 
@@ -220,6 +223,40 @@ The factor model forecasts better. In particular, it does not understate the ris
 - **Keep inverse-vol weighting.** No factor-model weighting is better in both universes. ERC gives the same result as inverse vol, since 30 defensive stocks have similar correlations. Factor min-variance lowers volatility (13.6% vs 14.4%) and beta on S&P500 at the same Sharpe, but with 70% more turnover and fewer names, and it is worse on S&P100.
 - **The swan-beta selection adds something a generic low-risk portfolio does not.** Minimum variance over all candidates under the factor model, the textbook low-volatility portfolio, has about the same volatility but clearly less crash protection: PR mean 0.38–0.47 vs 0.59, and it lost more than the index in a swan. Adding the predicted swan-beta constraint recovers part of the gap. Picking stocks by how they fell in past crashes is not the same as picking the least volatile ones.
 - **Use the risk model to measure, not to weight.** It forecasts portfolio risk better than the sample covariance and does not understate an optimised portfolio's risk. That makes it the right tool for risk reports, for checking the portfolio's factor exposures, and for any future optimiser.
+
+## Component exploration: what matters?
+
+`explore.py`. All preselection methods rank the same pool (stocks with all 5 window betas, point-in-time S&P500 members) and hold the n safest (30 / 20). Weightings: equal, inverse vol, HRP (pypfopt), HERC (`components.herc`, one-level version), factor-model min-variance, and the original MVO steps (injection + trend/drawdown + max Sharpe). Backtests use quarterly rebalancing at 0.3% cost, averaged over the 3 start months, 2004 → 2026-10.
+
+**A. Pick quality: average actual beta in the next swan of the n stocks picked** (Swan5–Swan11 mean; lower is better)
+
+| | random n | K-means (MVO2) | K-means + DBI (MVO DB) | DTW (team code) | DTW (corrected) | Holt | swan mean | market β | blend | Barra ridge |
+|---|---|---|---|---|---|---|---|---|---|---|
+| S&P500 | 0.93 | 0.47 | 0.49 | 0.44 | 0.45 | 0.71 | 0.45 | 0.39 | **0.38** | **0.38** |
+| S&P100 | 0.87 | 0.50 | 0.51 | 0.52 | 0.57 | 0.71 | 0.54 | **0.45** | **0.45** | 0.47 |
+
+Blend beats every swan-only method in 5–6 of 7 swans. The exception is always **Swan9 (COVID)**, where low-market-beta stocks (utilities, REITs) fell hard and the swan-history methods did better.
+
+**B. Main effects on the backtest.** Each row/column is averaged over the other dimension (S&P500 / S&P100):
+
+| | PR mean | Sharpe | max DD |
+|---|---|---|---|
+| range across preselection methods | **0.26 / 0.22** | 0.08 / 0.10 | 0.06 / 0.06 |
+| range across weightings | 0.04 / 0.03 | 0.13 / 0.08 | 0.12 / 0.07 |
+| random 30 / 20 stocks (mean of 5) | 0.09 / 0.14 | 0.51 / 0.65 | 0.57 / 0.51 |
+| best preselection rows | blend, market β, Barra ridge: 0.60–0.63 / 0.53–0.56 | | |
+| swan-only rows (K-means, DBI, DTW, swan mean) | 0.51–0.57 / 0.46–0.52 | | |
+| Holt | 0.29–0.47 / 0.29–0.39 | | |
+| original MVO weighting | | worst everywhere: 0.49–0.58 / 0.65–0.78 | 0.44–0.49 / 0.37–0.47 |
+
+**Conclusions**
+1. **The preselection is the strategy.** It decides crash protection (PR mean moves by 0.22–0.26 between methods, by only 0.03–0.04 between weightings) and is worth +0.4–0.5 PR over a random pick. The weighting mostly affects return volatility and drawdown.
+2. **Clustering adds nothing over sorting by average swan beta.** K-means, K-means + DBI and DTW give about the same picks as simply sorting by the mean of the last 5 swan betas; on S&P500 corrected DTW gives exactly the same ranking. DBI picks the K-means seeds with the best-separated clusters, which says nothing about future betas. DTW warps the order of the swans, but a stock's betas in Swan5 and Swan6 are separate events, not a time series that can be shifted. The team's DTW code also passes the square distance matrix to `linkage` as if its rows were features. Fixing that does not change the result.
+3. **Holt is harmful.** Extrapolating a trend through 5 unrelated crashes gives the worst picks: actual beta 0.71, barely better than random on some swans.
+4. **Plain market beta is the strongest single signal, but swan history adds something.** Blend and Barra ridge are best overall. In a pooled regression of the next swan beta on swan mean, market beta and volatility, the swan mean adds a small amount once market beta is known (coefficient 0.11–0.14, p ≈ 0.05–0.06, negative in Swan4 and Swan10D). But it is what saves the portfolio in an unusual crash like COVID. Averaging the last 3, 5 or all swans makes no difference (rank corr 0.39 / 0.40 / 0.38).
+5. **Weighting: avoid the original MVO; the rest are similar.** The original MVO steps hold 6–9 stocks, turn over 3–4×/yr and have the worst Sharpe and drawdown in both universes. Equal, inverse vol, HRP and factor min-var are within noise; factor min-var gives the lowest drawdown on S&P500. HERC has more turnover and is not better.
+6. **The Barra model in preselection** (style exposures and sectors as extra features of the ridge forecaster) gives about the same picks as the simple blend. It is used in weighting (factor min-var) and for risk measurement.
+7. **Protection vs return.** Swan-only selections hold higher-beta stocks (~0.6 vs ~0.5) and so earn a little more (Sharpe 0.69–0.73 vs 0.66–0.67 on S&P500), at the cost of less crash protection. Which to prefer depends on the strategy's objective, which should be decided explicitly.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
