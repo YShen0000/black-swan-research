@@ -34,7 +34,7 @@ def params(target, with_pfwd):
     eval_end = (recovered[0] if len(recovered) else bench.index[-1]) + datetime.timedelta(days=1)
     return dict(
         beta_file=None, marketdd_file=None, optdata_file=file if with_pfwd else None, optdata_sheet=sheet,
-        universe=mvo2.load_optdata(file, sheet).index if file else None,   # same universe with and without P_fwd
+        tickers=mvo2.load_optdata(file, sheet).index if file else None,   # same universe with and without P_fwd
         start_swan=order[k - 5], end_swan=order[k - 1], start=end - LOOKBACK, end=end,
         start_swan_date=end, end_swan_date=eval_end, crash_peak=w.peak, crash_trough=w.trough,
         benchmark=w.benchmark, N=7, w1=0.17, min_weight=0.03, MA_days=30,
