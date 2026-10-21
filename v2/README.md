@@ -14,6 +14,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/walkforward.py  # predict Swan5..Swan11 one by one from the 5 swans before each
 .venv/bin/python v2/backtest.py SP100 hand   # monthly-rebalance backtest 2004 -> today (SP100|SP500, hand|rule swans)
 .venv/bin/python v2/experiments.py SP500      # component grid on point-in-time S&P500 members (~45 min, cached after)
+.venv/bin/python v2/components.py SP500 2026-10-01   # recommended holdings on a date (default: last price date)
 ```
 
 | File | What |

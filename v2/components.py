@@ -1,5 +1,7 @@
 """Swappable strategy components, so combinations can be compared in experiments.py.
 
+    python v2/components.py SP500 2026-10-01    # recommended holdings for that date -> v2/output/holdings_*.csv
+
     universe    which stocks can be held on date t (point-in-time S&P500 membership, or today's S&P100 list)
     forecaster  predicted swan beta per stock, using only data before t
     selection   which stocks to hold, from the predicted betas
@@ -175,3 +177,17 @@ def recommended(t, universe="SP500", n=None, which="hand"):
     ctx = experiments.context(pd.Timestamp(t), universe, swans)
     pick = select_lowest(forecast("blend", ctx["x"], universe, ctx["known"]), n or experiments.N_SELECT[universe])
     return weigh("inv_vol", pick, pd.Timestamp(t), universe, ctx).sort_values(ascending=False)
+
+
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    universe = sys.argv[1] if len(sys.argv) > 1 else "SP500"
+    t = pd.Timestamp(sys.argv[2] if len(sys.argv) > 2 else swan_beta.load_prices(universe).index[-1])
+    w = recommended(t, universe)
+    assert abs(w.sum() - 1) < 1e-9 and (w > 0).all()
+    out = Path(__file__).parent / "output"
+    out.mkdir(exist_ok=True)
+    w.rename("weight").to_csv(out / f"holdings_{universe}_{t:%Y-%m-%d}.csv")
+    print(f"{universe} {t.date()}: {len(w)} stocks")
+    print(w.round(4).to_string())
