@@ -45,7 +45,7 @@ def monthly_weights(universe="SP100", which="hand", start="2004-01-01", N=None):
     bench = "^OEX" if universe == "SP100" else "^GSPC"
     swans = swan_list(universe, which)
     betas = swan_beta.swan_betas(close, swans)
-    stocks = close.columns.difference(["^OEX", "^GSPC", "SPY"])
+    stocks = close.columns.difference(swan_beta.INDICES)
     dd = swan_beta.drawdown(close[bench].dropna())
     dates = close.loc[start:].index.to_series().groupby(close.loc[start:].index.to_period("M")).first()
     out = {}

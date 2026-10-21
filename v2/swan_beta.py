@@ -21,6 +21,7 @@ import pandas as pd
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 LOOK, CALM = 252, 0.05   # 1-year high; "calm" = within 5% of it
+INDICES = ["^OEX", "^GSPC", "SPY", "OEF"]   # benchmark columns in the price files, never stocks
 
 
 @lru_cache
@@ -72,7 +73,7 @@ SWANS = pd.read_csv(DATA / "swans.csv", index_col="swan", parse_dates=["peak", "
 
 def swan_betas(prices=CLOSE, swans=SWANS):
     """Stocks x swans matrix of Swan Beta (NaN where the stock has no price at the peak or trough)."""
-    stocks = prices.drop(columns=swans.benchmark.unique(), errors="ignore")
+    stocks = prices.drop(columns=INDICES, errors="ignore")
     out = {}
     for s, w in swans.iterrows():
         ret = prices.loc[w.trough] / prices.loc[w.peak] - 1

@@ -157,7 +157,9 @@ def estimate(prices, end, optdata, MA_days, universe="SP100"):
 
 def optimize(expected, cov, w1, min_weight, rf=0.01, method="max_sharpe"):
     """Max Sharpe; if it has no solution (too few stocks beat rf under the w1 cap, e.g. before 2008), min volatility.
-    method="min_volatility" skips the return estimate altogether."""
+    method="min_volatility" skips the return estimate altogether.
+    The w1 cap is raised to 1/n when there are too few stocks for it to be feasible (e.g. 5 stocks at 17%)."""
+    w1 = max(w1, 1 / len(expected) + 1e-6)
     try:
         if method != "max_sharpe":
             raise ValueError

@@ -4,6 +4,8 @@ The original notebooks in `training/` and `Projects/` are left untouched. `v2/` 
 so each pipeline component (preselection, beta forecast, market-drop scenario, return / risk estimate, optimizer,
 post-allocation) can be swapped and compared against the baseline.
 
+**Recommended setup (2026-10):** each month, predict every stock's next-swan beta as ½ × the mean of its last 5 swan betas + ½ × its 1-year market beta. Hold the 30 lowest (S&P500, point-in-time members) or 20 lowest (S&P100) at inverse-volatility weights: `components.recommended(date, universe)`. See [Component experiments](#component-experiments) for why.
+
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/mvo2.py      # Swan9 baseline -> v2/output/, asserts reference PR 0.2225
@@ -11,6 +13,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/swan_beta.py # recompute every Swan Beta from prices, check it against All_SwanBeta100.xlsx
 .venv/bin/python v2/walkforward.py  # predict Swan5..Swan11 one by one from the 5 swans before each
 .venv/bin/python v2/backtest.py SP100 hand   # monthly-rebalance backtest 2004 -> today (SP100|SP500, hand|rule swans)
+.venv/bin/python v2/experiments.py SP500      # component grid on point-in-time S&P500 members (~45 min, cached after)
 ```
 
 | File | What |
@@ -20,6 +23,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `swan_beta.py` | Swan Beta matrix and swan market stats (DD, T1, T2) from `data/swans.csv` and the frozen prices |
 | `walkforward.py` | walk-forward test over Swan5–Swan11 on the unified data, with and without analyst targets |
 | `backtest.py` | monthly rebalance from 2004, using only swans confirmed and prices known at each date; compares MVO with ablations and simple baselines |
+| `components.py` | swappable parts: point-in-time universe, beta forecasters (swan mean, market beta, blend, ridge, random forest), selection, weighting (equal, inverse vol, min vol, MVO); `recommended()` |
+| `experiments.py` | forecaster test on Swan5–Swan11 and the full forecaster × weighting backtest grid |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
 
@@ -45,7 +50,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | Swan5 2008 | no P_fwd | 0.285 | 0.352 | 0.715 | +6.0% |
 | Swan6 2011 | no P_fwd | 0.906 | 0.760 | 0.094 | +8.0% |
 | Swan7 2015 | no P_fwd | 0.197 | 0.345 | 0.803 | +10.5% |
-| Swan8 2018 | no P_fwd | 0.577 | 0.817 | 0.423 | +7.8% |
+| Swan8 2018 | no P_fwd | 0.503 | 0.592 | 0.497 | +3.5% |
 | Swan9 2020 | no P_fwd | 0.263 | 0.191 | 0.739 | −2.5% |
 | | P_fwd (look-ahead) | 0.225 | 0.191 | 0.777 | −3.8% |
 | | original input files | 0.222 | 0.182 | 0.777 | −3.8% |
@@ -57,37 +62,71 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 \* Portfolio minus index return, from the portfolio date until the index is back at its pre-crash peak.
 
 - The predicted portfolio β is about 0.41–0.46 every time; the actual β ranges from 0.09 to 0.80.
-- Without P_fwd: mean PR 0.527. Equal-weighting the preselected stocks instead gives 0.550, and MVO beats it in only 3 of 7 swans.
+- Without P_fwd: mean PR 0.517. Equal-weighting the preselected stocks instead gives 0.518, and MVO beats it in only 3 of 7 swans.
 - Analyst targets never helped: worse on Swan9 and Swan10D, a tie on Swan11.
 - Seven events is a small sample. Treat these numbers as a baseline to compare upgrades against, not as proof.
 
 ## Backtest: monthly rebalance, 2004-01 → 2026-10, 10 bp cost per unit of turnover
 
-Each month the portfolio is rebuilt from data known that day: the last 5 *confirmed* swans, prices up to the day before, and trend returns (no analyst targets). It is then held for the month.
+`backtest.py`: each month the original pipeline is rebuilt from data known that day (the last 5 *confirmed* swans, prices up to the day before, trend returns), then held for the month. S&P100, hand swans:
 
-| hand swans | S&P100 MVO | no injection | Min-vol | Preselect EW | Universe EW | ^OEX | Switch |
+| | MVO | no injection | Min-vol | Preselect EW | Universe EW | ^OEX | Switch |
 |---|---|---|---|---|---|---|---|
-| CAGR | 10.1% | 10.1% | 10.2% | 11.0% | 12.9% | 6.9% | 7.5% |
-| vol | 15.2% | 15.2% | 14.3% | 15.1% | 18.1% | 18.0% | 16.3% |
-| Sharpe (rf=0) | 0.71 | 0.71 | 0.75 | 0.77 | 0.76 | 0.46 | 0.52 |
+| CAGR | 9.6% | 9.5% | 9.8% | 10.6% | 12.9% | 6.9% | 7.2% |
+| Sharpe (rf=0) | 0.68 | 0.67 | 0.72 | 0.74 | 0.76 | 0.46 | 0.51 |
 | max drawdown | 32% | 36% | 34% | 36% | 47% | 52% | 33% |
-| beta | 0.59 | 0.59 | 0.57 | 0.64 | 0.96 | 1.00 | 0.83 |
+| beta | 0.59 | 0.60 | 0.57 | 0.65 | 0.96 | 1.00 | 0.83 |
 
-| hand swans | S&P500 MVO | no injection | Min-vol | Preselect EW | Universe EW | ^GSPC | Switch |
-|---|---|---|---|---|---|---|---|
-| CAGR | 10.5% | 10.3% | 8.3% | 9.6% | 13.6% | 7.2% | 7.2% |
-| vol | 15.0% | 15.1% | 14.2% | 14.8% | 19.2% | 18.2% | 15.9% |
-| Sharpe (rf=0) | 0.74 | 0.73 | 0.63 | 0.70 | 0.76 | 0.48 | 0.52 |
-| max drawdown | 35% | 36% | 36% | 37% | 52% | 53% | 36% |
-| beta | 0.55 | 0.56 | 0.54 | 0.59 | 1.02 | 1.00 | 0.80 |
+- **The crash injection adds little**: same return, a few points less drawdown. The protection comes from the swan-beta preselection.
+- **Detecting a swan and switching then is too late.** By the time the index is 10% down, much of the fall has happened. *Switch* (hold the index, move to MVO when the index is ≥10% below its 1-year high) earns about the index's return.
+- ^OEX / ^GSPC are price indices with no dividends, while stock prices include them, so they understate the market by ~2%/yr. Use OEF / SPY (total return) when comparing returns; `experiments.py` reports both.
 
-Per-swan PR and the rule-based swan runs are printed by `backtest.py` and saved under `v2/output/`. The rule list gives the same picture: S&P100 MVO CAGR 11.6%, max drawdown 44%; S&P500 9.2%, 37%.
+## Component experiments
 
-- **The strategy does what it is meant to.** Beta is about 0.55–0.6, the max drawdown is 32–35% vs 52–53% for the index, and it lost less than the index in every swan since 2004. COVID was the weakest case (PR 0.08–0.24).
-- **Survivorship bias is large.** Equal-weighting today's constituents beats the index by about 6%/yr, because companies that later failed or were dropped are missing. So the strategy's CAGR edge over the index is not trustworthy. The fair comparison is with Universe EW, which has the same bias: the strategy earns ~2–3%/yr less but with ~40% lower beta and drawdown, at a similar Sharpe.
-- **The crash injection adds little.** Same CAGR and Sharpe, 1–4 points less drawdown. The protection comes from the swan-beta preselection.
-- **MVO adds little over equal-weighting the preselection**, at 5–6× the turnover. Min-vol is no better.
-- **Detecting a swan and switching then is too late.** By the time the index is 10% down, much of the fall has happened; Switch earns about the index's return with only a little less drawdown.
+`experiments.py`, S&P500 universe = **point-in-time members** (`data/universe`), so stocks enter only once they joined the index and leave when they were dropped. S&P100 = today's list (no point-in-time source, survivorship-biased). Monthly rebalance 2004 → 2026-10, 10 bp per unit of turnover. Selection: lowest 30 (S&P500) / 20 (S&P100) predicted betas, among stocks with at least 2 of the last 5 swan betas.
+
+**1. Which forecaster predicts the next swan's beta?** Each of Swan5–Swan11 predicted the day before its peak. Mean over the 7 swans:
+
+| | S&P500 rank corr | S&P500 actual β of lowest 30 | S&P100 rank corr | S&P100 actual β of lowest 20 |
+|---|---|---|---|---|
+| all candidates | | 0.95 | | 0.88 |
+| K-means cluster (original) | | 0.43 | | 0.46 |
+| swan mean (last 5) | 0.41 | 0.48 | 0.40 | 0.53 |
+| 1-year market beta | 0.53 | 0.41 | 0.54 | 0.43 |
+| **blend (½ swan mean + ½ market beta)** | 0.53 | **0.38** | 0.53 | **0.43** |
+| ridge (6 features, trained on earlier swans) | 0.54 | 0.38 | 0.53 | 0.45 |
+| random forest (same) | 0.52 | 0.41 | 0.51 | 0.45 |
+
+The swan betas alone are a weaker predictor than plain market beta. Combining the two is best. Machine learning on ~10 past swans does not beat the simple average.
+
+**2. Backtest of forecaster × weighting** (selected rows; all 24 in `v2/output/experiments_<universe>_grid.csv`):
+
+| S&P500 point-in-time | CAGR | vol | Sharpe | max DD | beta | turnover/yr | PR mean | PR worst |
+|---|---|---|---|---|---|---|---|---|
+| K-means + MVO (original) | 10.3% | 15.5% | 0.71 | 37% | 0.57 | 7.1 | 0.64 | 0.02 |
+| K-means + equal | 9.3% | 15.4% | 0.66 | 34% | 0.61 | 3.9 | 0.58 | 0.09 |
+| **blend + inverse vol** | 9.0% | 14.5% | 0.67 | 37% | 0.54 | 2.1 | 0.62 | 0.08 |
+| swan mean + inverse vol | 9.5% | 15.4% | 0.67 | 37% | 0.65 | 0.9 | 0.56 | 0.09 |
+| market beta + inverse vol | 8.0% | 13.9% | 0.63 | 37% | 0.50 | 2.9 | 0.61 | 0.04 |
+| ridge + inverse vol | 7.6% | 14.0% | 0.59 | 39% | 0.51 | 2.5 | 0.61 | 0.07 |
+| universe equal weight | 10.3% | 19.6% | 0.60 | 58% | 1.04 | 0.7 | 0.03 | −0.14 |
+| SPY (incl. dividends) | 9.0% | 18.1% | 0.57 | 52% | 0.99 | 0 | 0.02 | 0.01 |
+
+| S&P100 (today's list) | CAGR | vol | Sharpe | max DD | beta | turnover/yr | PR mean | PR worst |
+|---|---|---|---|---|---|---|---|---|
+| K-means + MVO (original) | 9.6% | 15.2% | 0.68 | 32% | 0.59 | 4.1 | 0.54 | 0.19 |
+| **blend + inverse vol** | 9.4% | 13.9% | 0.72 | 34% | 0.58 | 1.4 | 0.57 | 0.07 |
+| swan mean + inverse vol | 11.1% | 14.6% | 0.80 | 36% | 0.66 | 0.8 | 0.49 | 0.08 |
+| universe equal weight | 12.9% | 18.1% | 0.76 | 47% | 0.96 | 0.6 | 0.10 | −0.09 |
+| OEF (incl. dividends) | 8.9% | 17.9% | 0.56 | 51% | 0.99 | 0 | 0.01 | −0.03 |
+
+**3. Conclusions**
+- **Every combination does the job.** About the market's return (SPY 9.0%) with beta 0.5–0.65, ~20% less volatility and a max drawdown of 34–40% instead of 52%. The rows shown lost less than the index in every one of the 7 swans since 2004 (PR worst > 0, PR mean 0.5–0.7). COVID is the weak spot for all (PR 0.02–0.24).
+- **No combination is significantly better than another on Sharpe.** In a monthly-block bootstrap, the 90% interval of the Sharpe difference vs the original includes 0 for every variant (e.g. blend + inverse vol: S&P500 [−0.19, +0.11], S&P100 [−0.09, +0.19]). With 22 years and 7 crashes, differences of ±0.1 Sharpe are noise.
+- **Why blend + inverse vol is recommended anyway:** it is the best beta predictor in both universes, and its crash protection (PR mean) matches the original. It needs a third to a half of the original's turnover, which matters once real costs are above 10 bp. It also drops the tuned parts: no K-means seed, crash injection, analyst targets or 0.5/1.3/0.7 thresholds, so there is less to overfit. The cost is slightly lower return than the original on S&P500 (9.0% vs 10.3%, not significant).
+- If return matters more than protection: swan mean + inverse vol has the lowest turnover and a higher return, but more beta (0.65) and less protection.
+- MVO (max Sharpe on a return estimate) and min-vol never help consistently; equal and inverse-vol weights are as good.
+- Survivorship bias remains. Point-in-time membership is in place, but Yahoo has no prices for about half the 2004 members (mostly later delisted or acquired; coverage 52% in 2004, 60% in 2008, 67% in 2012, 86% in 2020, 97% in 2026). The point-in-time universe equal weight beating SPY by 1.3%/yr is the remaining bias plus the equal-weight effect. Removing it needs paid data (Norgate, CRSP).
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
@@ -108,3 +147,5 @@ Known and kept as in the original: renormalising after the 3% filter can push a 
 - One set of inputs is enough. v2 reads only `data/SwanBeta`, `data/MVO_Components`, `data/optdata`, `data/prices` and `data/swans.csv`. The copies are redundant: `data/MVO Components/` (a subset of `data/MVO_Components/`), `dtw_result/dtw_data/`, and `Projects/Gradient Matrix Test/Swan10d/Code/`. The latter two have older ticker lists.
 - `All_SwanBeta100.xlsx` (102 tickers, up to Swan10D, exact) and `All_SwanBeta100_MVO2.xlsx` (95 tickers, closer to the 2020 index, Swan4/Swan8 off by up to 0.02, Swan10a/10b instead of 10D) are two versions of the same table. The baseline keeps `_MVO2` so it stays comparable with the original.
 - WBA and AVG are no longer on Yahoo. BK is downloaded as BNY.
+- S&P500 prices cover the Swan Beta file's tickers plus every member since 1996 that Yahoo still has (1,213 columns). A reused ticker can map an old member to a newer company with the same symbol; this has not been checked one by one.
+- ^OEX / ^GSPC are price-only; OEF (from 2000) and SPY (from 1993) are the total-return benchmarks in the price files.

@@ -57,9 +57,10 @@ def run_original():
 if __name__ == "__main__":
     w0, pr0, alloc0 = run_original()
     v2 = mvo2.run()
-    nominal, mvo2.NOMINAL = mvo2.NOMINAL, mvo2.CLOSE   # v2 without the P_fwd nominal-price fix, to isolate its effect
+    load = mvo2.swan_beta.load_prices   # v2 without the P_fwd nominal-price fix (nominal = adjusted), to isolate its effect
+    mvo2.swan_beta.load_prices = lambda universe="SP100", kind="close": load(universe)
     v2_adj = mvo2.run()
-    mvo2.NOMINAL = nominal
+    mvo2.swan_beta.load_prices = load
 
     print("Swan9 (Swan4-8, S&P100, K_means N=7) -- weights")
     print(pd.DataFrame({"original": w0, "v2 w/o nominal fix": v2_adj["weights"], "v2": v2["weights"]}).fillna(0).round(4).to_string())

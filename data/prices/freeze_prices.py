@@ -7,7 +7,9 @@ close_<universe>.csv.gz          split + dividend adjusted close (what yfinance 
                             and Swan Beta.
 nominal_close_<universe>.csv.gz  the price actually quoted that day. Use when comparing with a dollar figure
                             from that day, e.g. optdata P_fwd (analyst target price).
-Universe: every ticker in that universe's Swan Beta files, plus ^OEX, ^GSPC, SPY. History from 1962 (or listing) to the run date.
+Universe: every ticker in that universe's Swan Beta files, plus ^OEX, ^GSPC, SPY, OEF. For SP500 also every ticker that was
+ever a member since 1996 (data/universe/sp500_ticker_start_end.csv); Yahoo has no history for most delisted ones.
+History from 1962 (or listing) to the run date.
 """
 import sys
 from datetime import date
@@ -26,8 +28,11 @@ universe = sys.argv[1] if len(sys.argv) > 1 else "SP100"
 tickers = set()
 for f in UNIVERSES[universe]:
     tickers |= set(pd.read_excel(DATA / f, index_col=0).index.dropna().astype(str))
-tickers = sorted(tickers) + ["^OEX", "^GSPC", "SPY"]
+if universe == "SP500":
+    tickers |= set(pd.read_csv(DATA / "universe/sp500_ticker_start_end.csv").ticker.str.replace(".", "-"))
+tickers = sorted(tickers) + ["^OEX", "^GSPC", "SPY", "OEF"]   # OEF / SPY: total-return S&P100 / S&P500 benchmarks
 RENAMED = {"BK": "BNY"}  # Yahoo serves the old history under the new ticker
+tickers = [t for t in tickers if t not in RENAMED.values()]   # the new name is fetched once, stored under the old
 
 
 def download(ts):
@@ -38,7 +43,7 @@ def download(ts):
 
 
 px = download(tickers)
-for _ in range(3):  # Yahoo drops random tickers under load; retry the empty ones
+for _ in range(1):  # Yahoo drops random tickers under load; retry the empty ones once (delisted ones stay empty)
     empty = [t for t in tickers if t not in px["Close"] or px["Close"][t].isna().all()]
     if empty:
         px = px.drop(columns=empty, level=1, errors="ignore").join(download(empty))
