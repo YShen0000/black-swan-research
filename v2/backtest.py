@@ -71,8 +71,9 @@ def monthly_weights(universe="SP100", which="hand", start="2004-01-01", N=None):
     return out
 
 
-def daily_returns(weights, close):
-    """Buy at the rebalance close, let weights drift, pay COST per unit of turnover at each rebalance."""
+def daily_returns(weights, close, cost=COST):
+    """Buy at the rebalance close, hold (weights drift) to the next rebalance close, pay `cost` per unit of turnover
+    on the first day of each holding period."""
     dates = sorted(weights)
     names = weights[dates[0]].keys()
     rets, turnover = {n: [] for n in names}, {n: [] for n in names}
@@ -80,11 +81,11 @@ def daily_returns(weights, close):
     for t, nxt in zip(dates, dates[1:] + [close.index[-1] + datetime.timedelta(days=1)]):
         for n in names:
             w = weights[t][n]
-            px = close.loc[t:nxt - datetime.timedelta(days=1), w.index].ffill()
+            px = close.loc[t:nxt, w.index].ffill()   # includes the next rebalance day: no day is skipped
             value = (px / px.iloc[0]) @ w
             r = value.pct_change().dropna()
             tv = w.sub(drifted[n], fill_value=0).abs().sum()
-            r = pd.concat([pd.Series({t: -COST * tv}), r])
+            r.iloc[0] = (1 + r.iloc[0]) * (1 - cost * tv) - 1
             rets[n].append(r)
             turnover[n].append(tv)
             last = w * px.iloc[-1] / px.iloc[0]

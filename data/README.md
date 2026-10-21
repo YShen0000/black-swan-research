@@ -4,4 +4,4 @@
 - When you are running the code, you may download all the data, put them together and upload all of them to colab if that can save your time in picking the required files for every different run.
 - `swans.csv` lists the 14 swan windows (benchmark, peak date, trough date). They were reverse-engineered from the Swan Beta files and reproduce them exactly; see `v2/swan_beta.py`.
 - `prices/` holds frozen Yahoo daily prices (adjusted and nominal) from 1962 (or listing) to 2026-10. `SP100`: the S&P 100 Swan Beta tickers. `SP500`: the S&P 500 Swan Beta tickers plus every member since 1996 that Yahoo still has. Both include ^OEX, ^GSPC (price-only) and SPY, OEF (total return). Rebuild with `python data/prices/freeze_prices.py [SP100|SP500]`. Most members that were delisted before ~2015 are no longer on Yahoo.
-- `universe/` holds point-in-time S&P 500 membership since 1996; see its README.
+- `universe/` holds point-in-time S&P 500 membership since 1996 and a sector table; see its README.

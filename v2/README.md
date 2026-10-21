@@ -4,7 +4,7 @@ The original notebooks in `training/` and `Projects/` are left untouched. `v2/` 
 so each pipeline component (preselection, beta forecast, market-drop scenario, return / risk estimate, optimizer,
 post-allocation) can be swapped and compared against the baseline.
 
-**Recommended setup (2026-10):** each month, predict every stock's next-swan beta as ½ × the mean of its last 5 swan betas + ½ × its 1-year market beta. Hold the 30 lowest (S&P500, point-in-time members) or 20 lowest (S&P100) at inverse-volatility weights: `components.recommended(date, universe)`. See [Component experiments](#component-experiments) for why.
+**Recommended setup (2026-10):** each quarter, predict every stock's next-swan beta as ½ × the mean of its last 5 swan betas + ½ × its 1-year market beta. Hold the 30 lowest (S&P500, point-in-time members) or 20 lowest (S&P100), with at most 25% of the stocks and 25% of the weight in one sector, at inverse-volatility weights: `components.recommended(date, universe)`. See [Component experiments](#component-experiments) and [Robustness](#robustness) for why.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
@@ -15,6 +15,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/backtest.py SP100 hand   # monthly-rebalance backtest 2004 -> today (SP100|SP500, hand|rule swans)
 .venv/bin/python v2/experiments.py SP500      # component grid on point-in-time S&P500 members (~45 min, cached after)
 .venv/bin/python v2/components.py SP500 2026-10-01   # recommended holdings on a date (default: last price date)
+.venv/bin/python v2/robustness.py SP500       # number of stocks, sector cap, rebalance frequency, cost (~45 min, cached after)
 ```
 
 | File | What |
@@ -26,6 +27,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `backtest.py` | monthly rebalance from 2004, using only swans confirmed and prices known at each date; compares MVO with ablations and simple baselines |
 | `components.py` | swappable parts: point-in-time universe, beta forecasters (swan mean, market beta, blend, ridge, random forest), selection, weighting (equal, inverse vol, min vol, MVO); `recommended()` |
 | `experiments.py` | forecaster test on Swan5–Swan11 and the full forecaster × weighting backtest grid |
+| `robustness.py` | the recommended setup across stock counts, sector caps, rebalance frequencies and costs; its sector weights |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
 
@@ -69,18 +71,19 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 ## Backtest: monthly rebalance, 2004-01 → 2026-10, 10 bp cost per unit of turnover
 
-`backtest.py`: each month the original pipeline is rebuilt from data known that day (the last 5 *confirmed* swans, prices up to the day before, trend returns), then held for the month. S&P100, hand swans:
+`backtest.py`: each month the original pipeline is rebuilt from data known that day (the last 5 *confirmed* swans, prices up to the day before, trend returns), then held to the next rebalance. S&P100, hand swans:
 
 | | MVO | no injection | Min-vol | Preselect EW | Universe EW | ^OEX | Switch |
 |---|---|---|---|---|---|---|---|
-| CAGR | 9.6% | 9.5% | 9.8% | 10.6% | 12.9% | 6.9% | 7.2% |
-| Sharpe (rf=0) | 0.68 | 0.67 | 0.72 | 0.74 | 0.76 | 0.46 | 0.51 |
-| max drawdown | 32% | 36% | 34% | 36% | 47% | 52% | 33% |
-| beta | 0.59 | 0.60 | 0.57 | 0.65 | 0.96 | 1.00 | 0.83 |
+| CAGR | 10.9% | 10.9% | 10.6% | 11.9% | 14.6% | 8.9% | 9.4% |
+| Sharpe (rf=0) | 0.74 | 0.74 | 0.76 | 0.80 | 0.83 | 0.55 | 0.62 |
+| max drawdown | 35% | 39% | 36% | 36% | 50% | 56% | 37% |
+| beta | 0.59 | 0.59 | 0.57 | 0.65 | 0.96 | 1.00 | 0.83 |
 
 - **The crash injection adds little**: same return, a few points less drawdown. The protection comes from the swan-beta preselection.
 - **Detecting a swan and switching then is too late.** By the time the index is 10% down, much of the fall has happened. *Switch* (hold the index, move to MVO when the index is ≥10% below its 1-year high) earns about the index's return.
-- ^OEX / ^GSPC are price indices with no dividends, while stock prices include them, so they understate the market by ~2%/yr. Use OEF / SPY (total return) when comparing returns; `experiments.py` reports both.
+- ^OEX / ^GSPC are price indices with no dividends, while stock prices include them, so they understate the market by ~2%/yr. Use OEF / SPY (total return) when comparing returns; `experiments.py` and `robustness.py` report both.
+- Results before 2026-10-21 skipped each rebalance day's return (about 12 trading days a year, for every portfolio and the index) and understated every CAGR by ~2%/yr. All numbers here are after the fix; the backtest's ^OEX now matches the actual index exactly.
 
 ## Component experiments
 
@@ -104,30 +107,66 @@ The swan betas alone are a weaker predictor than plain market beta. Combining th
 
 | S&P500 point-in-time | CAGR | vol | Sharpe | max DD | beta | turnover/yr | PR mean | PR worst |
 |---|---|---|---|---|---|---|---|---|
-| K-means + MVO (original) | 10.3% | 15.5% | 0.71 | 37% | 0.57 | 7.1 | 0.64 | 0.02 |
-| K-means + equal | 9.3% | 15.4% | 0.66 | 34% | 0.61 | 3.9 | 0.58 | 0.09 |
-| **blend + inverse vol** | 9.0% | 14.5% | 0.67 | 37% | 0.54 | 2.1 | 0.62 | 0.08 |
-| swan mean + inverse vol | 9.5% | 15.4% | 0.67 | 37% | 0.65 | 0.9 | 0.56 | 0.09 |
-| market beta + inverse vol | 8.0% | 13.9% | 0.63 | 37% | 0.50 | 2.9 | 0.61 | 0.04 |
-| ridge + inverse vol | 7.6% | 14.0% | 0.59 | 39% | 0.51 | 2.5 | 0.61 | 0.07 |
-| universe equal weight | 10.3% | 19.6% | 0.60 | 58% | 1.04 | 0.7 | 0.03 | −0.14 |
-| SPY (incl. dividends) | 9.0% | 18.1% | 0.57 | 52% | 0.99 | 0 | 0.02 | 0.01 |
+| K-means + MVO (original) | 10.8% | 16.0% | 0.72 | 34% | 0.57 | 7.1 | 0.65 | 0.03 |
+| K-means + equal | 10.1% | 15.9% | 0.69 | 37% | 0.61 | 3.9 | 0.58 | 0.11 |
+| **blend + inverse vol** | 9.9% | 14.9% | 0.71 | 39% | 0.54 | 2.1 | 0.64 | 0.11 |
+| swan mean + inverse vol | 10.4% | 15.9% | 0.71 | 42% | 0.65 | 0.9 | 0.57 | 0.11 |
+| market beta + inverse vol | 8.9% | 14.3% | 0.67 | 37% | 0.49 | 2.9 | 0.63 | 0.07 |
+| ridge + inverse vol | 8.3% | 14.4% | 0.63 | 38% | 0.50 | 2.5 | 0.64 | 0.10 |
+| universe equal weight | 11.6% | 20.1% | 0.65 | 58% | 1.04 | 0.7 | 0.03 | −0.17 |
+| SPY (incl. dividends) | 10.8% | 18.6% | 0.65 | 55% | 0.99 | 0 | 0.02 | 0.01 |
 
 | S&P100 (today's list) | CAGR | vol | Sharpe | max DD | beta | turnover/yr | PR mean | PR worst |
 |---|---|---|---|---|---|---|---|---|
-| K-means + MVO (original) | 9.6% | 15.2% | 0.68 | 32% | 0.59 | 4.1 | 0.54 | 0.19 |
-| **blend + inverse vol** | 9.4% | 13.9% | 0.72 | 34% | 0.58 | 1.4 | 0.57 | 0.07 |
-| swan mean + inverse vol | 11.1% | 14.6% | 0.80 | 36% | 0.66 | 0.8 | 0.49 | 0.08 |
-| universe equal weight | 12.9% | 18.1% | 0.76 | 47% | 0.96 | 0.6 | 0.10 | −0.09 |
-| OEF (incl. dividends) | 8.9% | 17.9% | 0.56 | 51% | 0.99 | 0 | 0.01 | −0.03 |
+| K-means + MVO (original) | 10.9% | 15.7% | 0.74 | 35% | 0.59 | 4.1 | 0.56 | 0.20 |
+| **blend + inverse vol** | 10.5% | 14.3% | 0.77 | 37% | 0.58 | 1.4 | 0.57 | 0.09 |
+| swan mean + inverse vol | 12.6% | 15.1% | 0.86 | 39% | 0.66 | 0.8 | 0.49 | 0.10 |
+| universe equal weight | 14.6% | 18.6% | 0.83 | 50% | 0.96 | 0.6 | 0.09 | −0.12 |
+| OEF (incl. dividends) | 10.8% | 18.4% | 0.65 | 54% | 0.99 | 0 | 0.02 | 0.00 |
 
 **3. Conclusions**
-- **Every combination does the job.** About the market's return (SPY 9.0%) with beta 0.5–0.65, ~20% less volatility and a max drawdown of 34–40% instead of 52%. The rows shown lost less than the index in every one of the 7 swans since 2004 (PR worst > 0, PR mean 0.5–0.7). COVID is the weak spot for all (PR 0.02–0.24).
-- **No combination is significantly better than another on Sharpe.** In a monthly-block bootstrap, the 90% interval of the Sharpe difference vs the original includes 0 for every variant (e.g. blend + inverse vol: S&P500 [−0.19, +0.11], S&P100 [−0.09, +0.19]). With 22 years and 7 crashes, differences of ±0.1 Sharpe are noise.
-- **Why blend + inverse vol is recommended anyway:** it is the best beta predictor in both universes, and its crash protection (PR mean) matches the original. It needs a third to a half of the original's turnover, which matters once real costs are above 10 bp. It also drops the tuned parts: no K-means seed, crash injection, analyst targets or 0.5/1.3/0.7 thresholds, so there is less to overfit. The cost is slightly lower return than the original on S&P500 (9.0% vs 10.3%, not significant).
-- If return matters more than protection: swan mean + inverse vol has the lowest turnover and a higher return, but more beta (0.65) and less protection.
-- MVO (max Sharpe on a return estimate) and min-vol never help consistently; equal and inverse-vol weights are as good.
-- Survivorship bias remains. Point-in-time membership is in place, but Yahoo has no prices for about half the 2004 members (mostly later delisted or acquired; coverage 52% in 2004, 60% in 2008, 67% in 2012, 86% in 2020, 97% in 2026). The point-in-time universe equal weight beating SPY by 1.3%/yr is the remaining bias plus the equal-weight effect. Removing it needs paid data (Norgate, CRSP).
+- **Every combination does the job.** Return close to the market (SPY 10.8%), beta 0.5–0.65, ~20% less volatility, and a max drawdown of 34–42% instead of 55%. The rows shown lost less than the index in every one of the 7 swans since 2004 (PR worst > 0). COVID is the weak spot for all.
+- **No combination is significantly better than another on Sharpe.** In a monthly-block bootstrap, the 90% interval of the Sharpe difference vs the original includes 0 for every variant (e.g. blend + inverse vol: S&P500 [−0.17, +0.14], S&P100 [−0.10, +0.17]). The only significant difference is that random forest + min-vol is worse. With 22 years and 7 crashes, differences of ±0.1 Sharpe are noise.
+- Blend is the best beta predictor in both universes and matches the original's crash protection at a third of its turnover, with no K-means seed, crash injection, analyst targets or tuned thresholds. MVO and min-vol never help consistently; equal and inverse-vol weights are as good.
+- Survivorship bias remains. Point-in-time membership is in place, but Yahoo has no prices for about half the 2004 members (coverage 52% in 2004, 60% in 2008, 67% in 2012, 86% in 2020, 97% in 2026). Removing it needs paid data (Norgate, CRSP).
+
+## Robustness
+
+`robustness.py`, blend + inverse vol, 2004 → 2026-10.
+
+**Number of stocks** (S&P500, monthly, 10 bp): smooth trade-off, no cliff. Fewer stocks gives more protection and less return.
+
+| n | 15 | 20 | **30** | 50 | 75 |
+|---|---|---|---|---|---|
+| CAGR | 9.5% | 9.8% | 9.9% | 9.9% | 9.9% |
+| Sharpe | 0.68 | 0.70 | 0.71 | 0.72 | 0.72 |
+| beta | 0.50 | 0.51 | 0.54 | 0.57 | 0.61 |
+| PR mean | 0.67 | 0.66 | 0.64 | 0.60 | 0.54 |
+
+S&P100 (n = 10–30): Sharpe 0.77–0.82, PR mean 0.51–0.62.
+
+**Sector concentration.** Without a cap, the S&P500 version holds on average 47% utilities (up to 83%) and 32% consumer staples. The S&P100 version holds 35% staples (up to 47%) and 20% each of health care and utilities. The original K-means + MVO is worse: 6.8 stocks on average, top sector 55% on average and at times 100%. A sector cap fixes this at almost no cost:
+
+| S&P500, n=30, monthly, 10 bp | CAGR | vol | Sharpe | max DD | beta | PR mean | PR worst |
+|---|---|---|---|---|---|---|---|
+| no cap | 9.9% | 14.9% | 0.71 | 39% | 0.54 | 0.64 | 0.11 |
+| 35% | 9.7% | 14.3% | 0.72 | 39% | 0.55 | 0.62 | 0.18 |
+| **25%** | 9.9% | 14.2% | 0.74 | 41% | 0.57 | 0.60 | 0.14 |
+| 20% | 10.1% | 14.5% | 0.74 | 42% | 0.60 | 0.57 | 0.12 |
+
+**Rebalance frequency and cost.** Quarterly is as good as monthly at ~60% of the turnover. At 0.3% cost (closer to real), S&P500 n=30: monthly Sharpe 0.68, quarterly 0.71, semi-annual 0.70. The original K-means + MVO turns over 7×/yr. At 0.5% cost its monthly Sharpe falls to 0.54 (blend: 0.65).
+
+**Timing luck.** Quarterly rebalancing, 0.3% cost, starting in month 1, 2 or 3 of each quarter:
+
+| | S&P500 Sharpe | S&P500 PR worst | S&P100 Sharpe | S&P100 PR worst |
+|---|---|---|---|---|
+| original (K-means + MVO) | 0.76 / 0.81 / 0.76 | −0.09 / −0.10 / 0.07 | 0.76 / 0.72 / 0.70 | 0.22 / 0.20 / 0.24 |
+| blend, n=30/20, no cap | 0.70 / 0.67 / 0.67 | 0.04 / 0.08 / 0.10 | 0.74 / 0.75 / 0.75 | 0.06 / 0.07 / 0.09 |
+| **blend, 25% sector cap** | 0.70 / 0.70 / 0.70 | 0.10 / 0.11 / 0.13 | 0.78 / 0.77 / 0.77 | 0.01 / 0.01 / 0.07 |
+
+The original's S&P500 return is higher (11.6–12.9% vs 9.4% quarterly), but it swings with the start month and in 2 of 3 cases it lost *more* than the index in one swan. That is what 7 concentrated stocks look like. The capped blend gives the same result whichever month it starts.
+
+**Recommendation:** blend beta → lowest 30 (S&P500) / 20 (S&P100) → inverse vol → 25% sector cap → quarterly rebalance. Expect roughly the market's return minus 1%/yr on S&P500 (SPY 10.8%, this 9.4–9.9%), beta ~0.57, max drawdown ~40% instead of 55%, and less loss than the index in every swan.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).

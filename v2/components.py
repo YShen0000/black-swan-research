@@ -124,8 +124,37 @@ def forecast(kind, x, universe, known):
 
 # ---------- selection ----------
 
-def select_lowest(pred, n):
-    return pred.nsmallest(n)
+@lru_cache
+def sectors():
+    """Ticker -> sector (data/universe/sectors.csv, today's classification). Missing tickers get their own name."""
+    s = pd.read_csv(swan_beta.DATA / "universe/sectors.csv", index_col="ticker").sector
+    return lambda tickers: pd.Series([s.get(t, t) for t in tickers], index=tickers)
+
+
+def select_lowest(pred, n, sector_cap=None):
+    """The n lowest predicted betas; with sector_cap, at most floor(cap * n) (>= 1) stocks per sector."""
+    if sector_cap is None:
+        return pred.nsmallest(n)
+    most = max(1, int(sector_cap * n))
+    pred = pred.sort_values()
+    rank = pred.groupby(sectors()(pred.index)).cumcount()
+    return pred[rank < most].head(n)
+
+
+def cap_sectors(w, cap):
+    """Scale sectors above `cap` down to it and spread the excess over the others, pro rata, until none is above."""
+    sec = sectors()(w.index)
+    for _ in range(50):
+        total = w.groupby(sec).sum()
+        over = total[total > cap + 1e-9]
+        if over.empty:
+            break
+        scale = sec.map(lambda s: cap / total[s] if s in over.index else 1.0)
+        excess = (w * (1 - scale)).sum()
+        w = w * scale
+        free = ~sec.isin(over.index)
+        w[free] += excess * w[free] / w[free].sum()
+    return w
 
 
 def select_kmeans(betas, window, N):
@@ -170,13 +199,15 @@ _SWANS, _BETAS = {}, {}
 
 # ---------- recommended setup (see v2/README.md, "Component experiments") ----------
 
-def recommended(t, universe="SP500", n=None, which="hand"):
-    """Blend beta forecast (half mean of the last 5 swan betas, half 1-year market beta) -> lowest n -> inverse vol."""
+def recommended(t, universe="SP500", n=None, which="hand", sector_cap=0.25):
+    """Blend beta forecast (half mean of the last 5 swan betas, half 1-year market beta) -> lowest n, at most 25% of
+    them per sector -> inverse vol, sectors capped at 25%. Rebalance quarterly (see v2/README.md, robustness)."""
     import experiments   # late import: experiments imports this module
     swans = experiments.setup(universe, which)
     ctx = experiments.context(pd.Timestamp(t), universe, swans)
-    pick = select_lowest(forecast("blend", ctx["x"], universe, ctx["known"]), n or experiments.N_SELECT[universe])
-    return weigh("inv_vol", pick, pd.Timestamp(t), universe, ctx).sort_values(ascending=False)
+    pick = select_lowest(forecast("blend", ctx["x"], universe, ctx["known"]), n or experiments.N_SELECT[universe], sector_cap)
+    w = weigh("inv_vol", pick, pd.Timestamp(t), universe, ctx)
+    return (w if sector_cap is None else cap_sectors(w, sector_cap)).sort_values(ascending=False)
 
 
 if __name__ == "__main__":
