@@ -22,6 +22,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/factor_experiment.py SP500   # factor risk model in the weighting step vs the recommended setup
 .venv/bin/python v2/explore.py SP500             # every preselection (K-means, DBI, DTW, Holt, ...) x weighting (HRP, HERC, ...)
 .venv/bin/python v2/develop.py SP500             # defensive and return tracks, pre-registered variants, overfitting checks
+.venv/bin/python v2/defense.py                   # does it make money, where the drawdowns come from, sizing / multi-asset layers
+.venv/bin/python v2/defense_selection.py         # momentum and stock-trend filters at the selection level
 ```
 
 | File | What |
@@ -39,6 +41,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `preselect.py` | the team's preselection methods (K-means, MVO DB's DBI voting, DTW clustering, Holt) plus a Barra-feature ridge forecaster |
 | `explore.py` | which component matters: preselection test at each swan, preselection × weighting grid, random controls |
 | `develop.py` | the two objectives: fixed-in-advance variants, β-matched index + T-bill benchmark, leave-one-swan-out and sub-period checks |
+| `defense.py` | original vs modified vs buy-and-hold and low-vol ETFs; drawdown and return sources; trend, vol-target, bond and risk-parity layers |
+| `defense_selection.py` | momentum filter and stock-level trend filter added to the selection |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
 
@@ -299,6 +303,49 @@ All variants are quarterly with 0.3% cost, inverse vol, a 25% sector cap, averag
 1. **Defensive track: keep D0.** None of the new scores passes the adoption rule. The worst-case and three-signal scores improve the worst swan (COVID) by ~0.05 PR, but lose 0.04–0.10 of mean PR and are worse in 5–6 of the 7 swans. That is exactly the "fit to COVID" trade the rule is meant to reject. The stress beta alone is clearly worse.
 2. **Return track: hold the lowest third (R1).** It has a higher Sharpe than D0 and the index in both universes, the most even Sharpe across the two sub-periods, the lowest turnover (~0.85×/yr), and still roughly halves the index's losses in the average swan (PR mean ~0.45). Lowest half (R2) is about the same with less protection.
 3. **The strategy's edge over "just hold less stock" was earned before 2015.** Against the β-matched index + T-bill mix, both tracks earned +4.6–6.6%/yr in 2004–2014 and about −1% to +0.5%/yr in 2015–2026. Since 2015 the index (mega-cap growth) has had the higher Sharpe (0.82–0.85). What the strategy still delivered then is crash protection: PR 0.53–1.0 in Swan8, Swan10D and Swan11. Whether the pre-2015 edge (the low-beta anomaly) comes back is the main open question.
+
+## Drawdowns and returns: diagnosis and layers
+
+`defense.py`, S&P500 point-in-time, quarterly rebalance, 0.3% cost, 2004 → 2026-10.
+
+**Does it make money?**
+
+| | CAGR | Sharpe | max DD (when) | GFC 07-10→09-03 | COVID | 2022 | β | alpha |
+|---|---|---|---|---|---|---|---|---|
+| original K-means + MVO, quarterly | 11.7% | 0.77 | 37% (COVID) | −20% | −37% | −2% | 0.58 | +4.7% |
+| original, monthly as the team ran it | 10.8% | 0.72 | 34% (GFC) | −30% | −33% | −5% | 0.57 | +3.9% |
+| defensive D0 | 9.6% | 0.71 | 40% (GFC) | −39% | −31% | −10% | 0.58 | +2.6% |
+| return R1 | 10.5% | 0.75 | 40% (GFC) | −40% | −33% | −12% | 0.68 | +2.6% |
+| SPY | 10.8% | 0.65 | 55% (GFC) | −55% | −34% | −24% | 1.00 | 0 |
+
+Alpha is CAGR − T-bill − β × (SPY − T-bill). Since 2011-11 (when the low-vol ETFs start): SPY 14.9% / Sharpe 0.92, USMV 11.8% / 0.90, R1 11.7% / 0.88, D0 10.0% / 0.77, original 10.7% / 0.72.
+
+**Why the drawdowns are large and the returns do not beat buy-and-hold**
+- **It is a long-only stock portfolio with β ≈ 0.6.** In a crash where everything falls, it loses about β × the market's fall plus its own stock risk: 0.58 × 55% ≈ 32% from the market alone in 2008. No stock selection removes that systematic part. In COVID even the defensive stocks fell as much as the market.
+- **The return is β × the market plus a small alpha.** The alpha is +2.6% to +4.7%/yr, almost all of it before 2015. From 2015 to 2026 the market returned 13.7%/yr, and holding 0.6 of it cost about 5%/yr.
+- The original has a little more alpha but concentrates in ~7 stocks. Its result depends on timing, and in COVID it lost more than the index.
+
+**Additions tested** (fixed in advance; each also applied to SPY to see whether the layer, rather than the stock picking, does the work):
+
+| | CAGR | Sharpe | Sharpe 2004–14 / 2015–26 | max DD | worst year |
+|---|---|---|---|---|---|
+| R1 alone | 10.5% | 0.75 | 0.79 / 0.71 | 40% | −23% |
+| R1 + momentum filter (selection) | 9.9% | 0.71 | 0.76 / 0.65 | 40% | −24% |
+| R1 + stock trend filter (selection) | 6.5% | 0.71 | 0.98 / **0.49** | 27% | −11% |
+| R1 + index trend filter (10-month average) | 8.4% | 0.89 | 1.20 / **0.62** | 16% | −10% |
+| R1 + 10% vol target | 9.3% | 0.88 | 1.07 / 0.71 | 29% | −13% |
+| R1 60% / Treasuries 40% | 7.8% | 0.90 | 1.10 / 0.73 | 21% | −8% |
+| **R1 + Treasuries + gold, risk parity** | 7.2% | **1.10** | 1.42 / **0.82** | **16%** | −8% |
+| SPY + Treasuries + gold, risk parity | 7.0% | 1.05 | 1.18 / 0.94 | 17% | −12% |
+| **R1 risk parity, levered to 10% vol** (avg 1.65×, T-bill + 0.5% financing) | **10.4%** | 1.01 | | **21%** | −12% |
+| SPY risk parity, levered to 10% vol | 9.9% | 0.97 | | 22% | −17% |
+
+**Conclusions**
+1. **Stock-level additions do not fix it.** The momentum filter changes nothing. The stock trend filter cuts the drawdown but whipsaws after 2015, so it fails the sub-period rule.
+2. **The index trend filter** has the best drawdown control, but its gain is mostly 2008 and it lags after 2015. That is the same one-event dependence the COVID rule guards against.
+3. **What lowers the drawdown robustly is owning other assets.** Risk parity across the equity sleeve, 7–10y Treasuries and gold cuts the max drawdown to ~16% with a Sharpe above 1, and it is better than its parts in both sub-periods. Levered to 10% volatility, it earns about the market's return (10.4% vs 10.8%) with a max drawdown of ~21% instead of 55%.
+4. **The stock selection adds only a little on top.** SPY in the same risk-parity mix is close behind (Sharpe 1.05 vs 1.10, max DD 17% vs 16%). The defense comes mainly from the asset mix; swan-beta selection is a modest improvement to the equity sleeve.
+5. Caveats: Treasuries failed in 2022 (IEF −15%) and only gold helped; gold's strong 2024–26 run flatters the mix. Leverage needs futures or margin and has its own risks.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
