@@ -10,6 +10,7 @@
    allocation  B  60% sleeve / 40% 7-10y Treasuries (IEF), monthly
                P  risk parity: inverse 1-year vol across sleeve, IEF and gold (GLD, from 2004-11), monthly
                PT risk parity with the trend filter on the sleeve
+               M  fixed 60% sleeve / 20% IEF / 20% GLD (IEF takes gold's 20% before 2004-11), rebalanced monthly
    Each layer is also applied to SPY itself: if SPY + layer does as well, the layer, not the stock selection, is
    doing the work. 0.1% cost per unit of exposure change.
 Selection-level additions are in defense_selection.py.
@@ -77,8 +78,31 @@ def stats(s, spy, cash):
     return pd.Series(out)
 
 
+def fixed_mix(s, px, weights=(("s", 0.6), ("ief", 0.2), ("gld", 0.2)), cost=0.001):
+    """Sleeve + Treasury ETF + gold ETF at fixed weights, rebalanced at each month start, weights drift in between."""
+    a = pd.DataFrame({"s": s, "ief": px["IEF"].pct_change().reindex(s.index),
+                      "gld": px["GLD"].pct_change().reindex(s.index)}).fillna(0)
+    out, w, month = [], None, None
+    for d, row in a.iterrows():
+        target = dict(weights)
+        if d < pd.Timestamp("2004-11-18"):   # before GLD exists
+            target["ief"] += target.pop("gld")
+            target["gld"] = 0.0
+        target = pd.Series(target)
+        c = 0.0
+        if w is None or d.to_period("M") != month:
+            c = 0.0 if w is None else (target - w).abs().sum() * cost
+            w, month = target.copy(), d.to_period("M")
+        ret = float((w * row).sum())
+        out.append(ret - c)
+        w = w * (1 + row) / (1 + ret)
+    return pd.Series(out, index=a.index)
+
+
 def layer(kind, s, spy_tr, cash, px):
     """Apply a sizing / allocation layer to daily sleeve returns s. Decisions at month end, applied next month."""
+    if kind == "M":
+        return fixed_mix(s, px)
     month_end = s.groupby(s.index.to_period("M")).tail(1).index
     if kind == "T":
         sma = spy_tr.rolling(210).mean()
@@ -126,12 +150,12 @@ if __name__ == "__main__":
     rows = {}
     for sleeve in ["SPY", "original (K-means+MVO)", "defensive D0", "return R1"]:
         rows[(sleeve, "none")] = stats(r[sleeve], r.SPY, cash)
-        for kind in ["T", "V", "B", "P", "PT"]:
+        for kind in ["T", "V", "B", "P", "PT", "M"]:
             rows[(sleeve, kind)] = stats(layer(kind, r[sleeve], spy_tr, cash, px), r.SPY, cash)
     lay = pd.DataFrame(rows).T
     lay.to_csv(OUT / "defense_layers.csv")
     cols = ["CAGR", "vol", "Sharpe", "max DD", "worst year", "beta"] + list(CRISES)
-    print("\n2. layers (T trend, V vol target 10%, B 60/40 with IEF, P risk parity with IEF+GLD, PT P + trend)")
+    print("\n2. layers (T trend, V vol target 10%, B 60/40 with IEF, P risk parity with IEF+GLD, PT P + trend, M 60/20/20)")
     print(lay[cols].round(3).to_string())
     for name, part in [("2004-14", slice(None, "2014-12-31")), ("2015-26", slice("2015-01-01", None))]:
         sub = {k: v for k, v in rows.items()}

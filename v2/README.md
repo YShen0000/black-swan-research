@@ -337,6 +337,8 @@ Alpha is CAGR − T-bill − β × (SPY − T-bill). Since 2011-11 (when the low
 | R1 60% / Treasuries 40% | 7.8% | 0.90 | 1.10 / 0.73 | 21% | −8% |
 | **R1 + Treasuries + gold, risk parity** | 7.2% | **1.10** | 1.42 / **0.82** | **16%** | −8% |
 | SPY + Treasuries + gold, risk parity | 7.0% | 1.05 | 1.18 / 0.94 | 17% | −12% |
+| **R1 60% / Treasuries 20% / gold 20%** (no leverage) | **9.2%** | **0.96** | 1.04 / **0.88** | **23%** | −10% |
+| SPY 60% / Treasuries 20% / gold 20% | 9.6% | 0.85 | 0.71 / 0.99 | 33% | −20% |
 | **R1 risk parity, levered to 10% vol** (avg 1.65×, T-bill + 0.5% financing) | **10.4%** | 1.01 | | **21%** | −12% |
 | SPY risk parity, levered to 10% vol | 9.9% | 0.97 | | 22% | −17% |
 
@@ -346,6 +348,26 @@ Alpha is CAGR − T-bill − β × (SPY − T-bill). Since 2011-11 (when the low
 3. **What lowers the drawdown robustly is owning other assets.** Risk parity across the equity sleeve, 7–10y Treasuries and gold cuts the max drawdown to ~16% with a Sharpe above 1, and it is better than its parts in both sub-periods. Levered to 10% volatility, it earns about the market's return (10.4% vs 10.8%) with a max drawdown of ~21% instead of 55%.
 4. **The stock selection adds only a little on top.** SPY in the same risk-parity mix is close behind (Sharpe 1.05 vs 1.10, max DD 17% vs 16%). The defense comes mainly from the asset mix; swan-beta selection is a modest improvement to the equity sleeve.
 5. Caveats: Treasuries failed in 2022 (IEF −15%) and only gold helped; gold's strong 2024–26 run flatters the mix. Leverage needs futures or margin and has its own risks.
+
+## Lowering drawdowns inside the stock book
+
+`equity_defense.py`: still fully invested and long-only, fixed in advance. S&P500 point-in-time, quarterly, 0.3% cost, mean of 3 start months.
+
+| | CAGR | Sharpe | Sharpe 2004–14 / 2015–26 | max DD | GFC | COVID | 2022 | PR mean |
+|---|---|---|---|---|---|---|---|---|
+| D0 | 9.5% | 0.70 | 0.79 / 0.63 | 40% | −39% | −30% | −10% | 0.58 |
+| R1 | 10.3% | 0.74 | 0.77 / 0.70 | 41% | −40% | −33% | −12% | 0.44 |
+| E1 min variance on crash-day covariance (60 lowest blend) | 9.0% | 0.67 | 0.68 / 0.66 | 43% | −42% | −31% | −10% | 0.52 |
+| E2 equal risk per sector (D0 stocks) | 9.4% | 0.69 | 0.71 / 0.68 | 41% | −41% | −29% | −12% | 0.56 |
+| E3 min variance with stress beta ≤ 0.4 | 7.6% | 0.61 | 0.60 / 0.61 | 45% | −43% | −32% | −18% | 0.36 |
+| E4 R1 above the 10-month average, D0 below (always invested) | 10.0% | 0.73 | 0.76 / 0.70 | 40% | −39% | −33% | −12% | 0.46 |
+| original K-means + MVO | 12.1% | 0.78 | 0.97 / 0.61 | 36% (32–38%) | −26% | −35% | −4% | 0.63 |
+
+**None of the four lowers the drawdown.** A fully invested stock book bottoms out around 35–40% in 2008, when nearly every stock fell.
+
+The original fell less in 2008 (−26%) because MVO put 100% in utilities and consumer staples, with no health care, energy or industrials. D0's 25% sector cap spreads into those sectors, and they fell more in 2008. The same concentration hurt in COVID: 69% utilities in January 2020, which fell 35%, more than the index. So inside the stock book, betting on the most defensive sectors helps in some crashes and hurts in others; no variant is protective in all of them.
+
+**With ETFs allowed, the drawdown comes down.** The only additions that lowered the drawdown robustly were Treasury and gold ETFs (previous section). The simplest is a fixed **60% R1 / 20% IEF / 20% GLD**: 9.2% CAGR, max drawdown 23% (SPY 55%), worst year −10% (SPY −37%), Sharpe 0.96. That beats both R1 alone and SPY in both sub-periods. Here the stock selection clearly matters: the same mix with SPY as the stock part draws down 33%.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
