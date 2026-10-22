@@ -4,7 +4,9 @@ The original notebooks in `training/` and `Projects/` are left untouched. `v2/` 
 so each pipeline component (preselection, beta forecast, market-drop scenario, return / risk estimate, optimizer,
 post-allocation) can be swapped and compared against the baseline.
 
-**Recommended setup (2026-10):** each quarter, predict every stock's next-swan beta as ½ × the mean of its last 5 swan betas + ½ × its 1-year market beta. Hold the 30 lowest (S&P500, point-in-time members) or 20 lowest (S&P100), with at most 25% of the stocks and 25% of the weight in one sector, at inverse-volatility weights: `components.recommended(date, universe)`. See [Component experiments](#component-experiments) and [Robustness](#robustness) for why.
+**Two tracks (2026-10, see [Development](#development-two-objectives)):** *defensive* (maximise crash protection while fully invested) holds the 30 / 20 lowest-blend stocks; *return* (risk-adjusted return, protection as a side condition) holds the lowest third. Both use inverse vol, a 25% sector cap and quarterly rebalancing: `components.recommended(date, universe, track=...)`.
+
+**Defensive setup:** each quarter, predict every stock's next-swan beta as ½ × the mean of its last 5 swan betas + ½ × its 1-year market beta. Hold the 30 lowest (S&P500, point-in-time members) or 20 lowest (S&P100), with at most 25% of the stocks and 25% of the weight in one sector, at inverse-volatility weights: `components.recommended(date, universe)`. See [Component experiments](#component-experiments) and [Robustness](#robustness) for why.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
@@ -19,6 +21,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/risk_model.py             # factor risk model smoke test
 .venv/bin/python v2/factor_experiment.py SP500   # factor risk model in the weighting step vs the recommended setup
 .venv/bin/python v2/explore.py SP500             # every preselection (K-means, DBI, DTW, Holt, ...) x weighting (HRP, HERC, ...)
+.venv/bin/python v2/develop.py SP500             # defensive and return tracks, pre-registered variants, overfitting checks
 ```
 
 | File | What |
@@ -35,6 +38,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `factor_experiment.py` | risk-forecast accuracy (factor vs sample covariance) and factor-model weightings vs the recommended setup |
 | `preselect.py` | the team's preselection methods (K-means, MVO DB's DBI voting, DTW clustering, Holt) plus a Barra-feature ridge forecaster |
 | `explore.py` | which component matters: preselection test at each swan, preselection × weighting grid, random controls |
+| `develop.py` | the two objectives: fixed-in-advance variants, β-matched index + T-bill benchmark, leave-one-swan-out and sub-period checks |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
 
@@ -257,6 +261,44 @@ Blend beats every swan-only method in 5–6 of 7 swans. The exception is always 
 5. **Weighting: avoid the original MVO; the rest are similar.** The original MVO steps hold 6–9 stocks, turn over 3–4×/yr and have the worst Sharpe and drawdown in both universes. Equal, inverse vol, HRP and factor min-var are within noise; factor min-var gives the lowest drawdown on S&P500. HERC has more turnover and is not better.
 6. **The Barra model in preselection** (style exposures and sectors as extra features of the ridge forecaster) gives about the same picks as the simple blend. It is used in weighting (factor min-var) and for risk measurement.
 7. **Protection vs return.** Swan-only selections hold higher-beta stocks (~0.6 vs ~0.5) and so earn a little more (Sharpe 0.69–0.73 vs 0.66–0.67 on S&P500), at the cost of less crash protection. Which to prefer depends on the strategy's objective, which should be decided explicitly.
+
+## Development: two objectives
+
+`develop.py`. The variants were fixed *before* looking at results, and the decision rules are stated up front, so nothing is tuned to one crash, COVID in particular.
+
+- **Defensive track:** fully invested, maximise crash protection. Judged by PR mean and median, PR mean without COVID (Swan9), the worst leave-one-swan-out PR mean, down capture, and the cost vs the index.
+- **Return track:** risk-adjusted return, with crash protection as a side condition. Judged by Sharpe in each sub-period (2004–2014, 2015–2026) and excess return over the **β-matched index + T-bill mix**. That benchmark holds the index at the portfolio's beta and cash for the rest (`data/prices/tbill_13w.csv`); beating it means the stock selection is worth more than simply holding less stock.
+- **Adoption rule:** a variant replaces the baseline only if it is better in both universes, without COVID, in both sub-periods, and in at least 5 of 7 swans.
+
+All variants are quarterly with 0.3% cost, inverse vol, a 25% sector cap, averaged over the 3 start months, 2004 → 2026-10.
+
+**Defensive track** (S&P500 point-in-time / S&P100):
+
+| variant (score, lower = safer) | PR mean | PR mean w/o COVID | worst leave-one-out | PR worst | swans beating D0 | max DD | CAGR − index |
+|---|---|---|---|---|---|---|---|
+| **D0 blend**: ½ swan mean + ½ market β | **0.58 / 0.53** | **0.66 / 0.61** | **0.51 / 0.46** | 0.11 / 0.03 | – | 40% / 39% | −1.2% / +0.1% |
+| D1 stress: rank avg of swan mean and β on the worst 10% market days | 0.42 / 0.46 | 0.47 / 0.52 | 0.34 / 0.39 | 0.07 / 0.10 | 1 / 1 | 47% / 39% | −2.9% / −0.4% |
+| D2 both safe: max of the two ranks | 0.56 / 0.50 | 0.63 / 0.58 | 0.49 / 0.43 | 0.10 / 0.06 | 2 / 2 | 43% / 43% | −1.8% / −0.7% |
+| D3 worst case: rank avg of worst swan β and market β | 0.52 / 0.51 | 0.58 / 0.58 | 0.46 / 0.44 | 0.16 / 0.09 | 1 / 3 | 43% / 39% | −2.2% / −0.2% |
+| D4 three: worst swan β, stress β, market β | 0.49 / 0.50 | 0.55 / 0.56 | 0.42 / 0.42 | 0.15 / 0.10 | 1 / 1 | 43% / 38% | −2.6% / −0.6% |
+
+**Return track:**
+
+| | Sharpe | Sharpe 2004–14 | Sharpe 2015–26 | CAGR | excess vs β-matched 2004–14 | excess vs β-matched 2015–26 | max DD | β | PR mean |
+|---|---|---|---|---|---|---|---|---|---|
+| S&P500 D0 (30 stocks) | 0.70 | 0.79 | 0.63 | 9.5% | +5.4% | −0.9% | 40% | 0.58 | 0.58 |
+| S&P500 **R1 lowest third** | **0.74** | 0.77 | **0.70** | 10.3% | +5.1% | −0.8% | 41% | 0.68 | 0.44 |
+| S&P500 R2 lowest half | 0.72 | 0.73 | 0.72 | 10.5% | +4.6% | −1.1% | 44% | 0.75 | 0.34 |
+| SPY | 0.64 | 0.48 | 0.82 | 10.8% | – | – | 55% | 1.00 | 0 |
+| S&P100 D0 (20 stocks) | 0.78 | 0.81 | 0.76 | 10.9% | +6.4% | +0.4% | 39% | 0.61 | 0.53 |
+| S&P100 **R1 lowest third** | **0.82** | 0.82 | **0.82** | 11.3% | +6.4% | +0.5% | 39% | 0.64 | 0.45 |
+| S&P100 R2 lowest half | 0.82 | 0.82 | 0.83 | 11.8% | +6.6% | +0.2% | 40% | 0.71 | 0.38 |
+| OEF | 0.65 | 0.44 | 0.85 | 10.8% | – | – | 54% | 1.00 | 0 |
+
+**Conclusions**
+1. **Defensive track: keep D0.** None of the new scores passes the adoption rule. The worst-case and three-signal scores improve the worst swan (COVID) by ~0.05 PR, but lose 0.04–0.10 of mean PR and are worse in 5–6 of the 7 swans. That is exactly the "fit to COVID" trade the rule is meant to reject. The stress beta alone is clearly worse.
+2. **Return track: hold the lowest third (R1).** It has a higher Sharpe than D0 and the index in both universes, the most even Sharpe across the two sub-periods, the lowest turnover (~0.85×/yr), and still roughly halves the index's losses in the average swan (PR mean ~0.45). Lowest half (R2) is about the same with less protection.
+3. **The strategy's edge over "just hold less stock" was earned before 2015.** Against the β-matched index + T-bill mix, both tracks earned +4.6–6.6%/yr in 2004–2014 and about −1% to +0.5%/yr in 2015–2026. Since 2015 the index (mega-cap growth) has had the higher Sharpe (0.82–0.85). What the strategy still delivered then is crash protection: PR 0.53–1.0 in Swan8, Swan10D and Swan11. Whether the pre-2015 edge (the low-beta anomaly) comes back is the main open question.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
