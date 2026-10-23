@@ -24,6 +24,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/develop.py SP500             # defensive and return tracks, pre-registered variants, overfitting checks
 .venv/bin/python v2/defense.py                   # does it make money, where the drawdowns come from, sizing / multi-asset layers
 .venv/bin/python v2/defense_selection.py         # momentum and stock-trend filters at the selection level
+.venv/bin/python v2/equity_defense.py            # drawdown control inside a fully invested stock book
+.venv/bin/python v2/allocation.py                # long-term stock + ETF allocations against a 15% max drawdown target
 ```
 
 | File | What |
@@ -43,6 +45,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `develop.py` | the two objectives: fixed-in-advance variants, β-matched index + T-bill benchmark, leave-one-swan-out and sub-period checks |
 | `defense.py` | original vs modified vs buy-and-hold and low-vol ETFs; drawdown and return sources; trend, vol-target, bond and risk-parity layers |
 | `defense_selection.py` | momentum filter and stock-level trend filter added to the selection |
+| `equity_defense.py` | crash-day covariance min-var, sector risk parity, stress-beta cap, regime switch; all fully invested |
+| `allocation.py` | stock sleeve + Treasury / gold / TIPS / commodity ETFs: fixed mix, risk parity, vol target, drawdown control |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
 
@@ -368,6 +372,28 @@ Alpha is CAGR − T-bill − β × (SPY − T-bill). Since 2011-11 (when the low
 The original fell less in 2008 (−26%) because MVO put 100% in utilities and consumer staples, with no health care, energy or industrials. D0's 25% sector cap spreads into those sectors, and they fell more in 2008. The same concentration hurt in COVID: 69% utilities in January 2020, which fell 35%, more than the index. So inside the stock book, betting on the most defensive sectors helps in some crashes and hurts in others; no variant is protective in all of them.
 
 **With ETFs allowed, the drawdown comes down.** The only additions that lowered the drawdown robustly were Treasury and gold ETFs (previous section). The simplest is a fixed **60% R1 / 20% IEF / 20% GLD**: 9.2% CAGR, max drawdown 23% (SPY 55%), worst year −10% (SPY −37%), Sharpe 0.96. That beats both R1 alone and SPY in both sub-periods. Here the stock selection clearly matters: the same mix with SPY as the stock part draws down 33%.
+
+## Long-term allocation with stocks and ETFs (personal use, no leverage or options)
+
+Goal set on 2026-10-23: max drawdown ≤ 15% first, then as much return as possible. `allocation.py`, variants fixed in advance, monthly rebalance, 0.1% cost, 2004 → 2026-10:
+
+| stock sleeve R1 (swan-beta return track) + | CAGR | Sharpe | max DD | worst year | CAGR 2004–14 / 2015–26 | GFC | COVID | 2022 |
+|---|---|---|---|---|---|---|---|---|
+| nothing (100% stocks) | 10.5% | 0.75 | 40% | −23% | – | −40% | −33% | −12% |
+| A0 60% / 20% IEF / 20% GLD | 9.4% | 0.97 | 22.5% | −8.7% | 10.3% / 8.5% | −18% | −21% | −12% |
+| A5 A0 + 8% vol target (rest SHY) | 8.3% | 1.02 | 20.2% | −9.4% | 9.5% / 7.2% | −11% | −20% | −10% |
+| A6 A0 + drawdown control | 8.6% | 0.98 | 20.6% | −9.8% | 9.8% / 7.4% | −13% | −19% | −11% |
+| **A1 risk parity: R1, IEF, GLD** | **7.1%** | **1.08** | **15.7%** | −8.2% | 8.7% / 5.6% | +6% | −8% | −13% |
+| A2 risk parity + TIP + DBC | 5.4% | 0.94 | 15.8% | −7.2% | 6.3% / 4.6% | +2% | −7% | −10% |
+| A3 / A4 A2 + vol target / drawdown control | 5.0–5.2% | 0.94 | 15.2–15.8% | ~−7% | | | | |
+
+With D0 as the sleeve the numbers are similar (A4 is the only variant at ≤ 15%: 14.7% max DD, 4.8% CAGR). SPY as the sleeve: A0 9.9% / 31.6% max DD, A1 7.0% / 17.5%.
+
+**Conclusions**
+1. **The frontier is clear: about 7%/yr at a 15–16% max drawdown, 8–9% at 20–22%, 10–11% at 40%, and SPY's 10.8% at 55%.** Nothing tested, and nothing realistic without leverage, gets 20%/yr with a ≤ 15% drawdown over 2004–2026.
+2. **Inflation assets do not help.** Adding TIP and commodities (DBC) leaves the drawdown at ~16% and lowers the return by ~1.7%/yr. The vol target and drawdown control add little on top of risk parity; on the 60/20/20 mix they cut ~2 points of drawdown for ~1% of return.
+3. **Where the swan-beta selection matters:** in an equity-heavy mix it cuts the drawdown clearly (A0: 22.5% with R1 vs 31.6% with SPY). In risk parity, where stocks are only ~25–30% of the risk budget, it matters little (15.7% vs 17.5%).
+4. The 15–16% drawdown of the risk-parity mixes comes from 2022, when stocks and bonds fell together. Since 2015 their returns are ~5–6%/yr, because bonds have been weak.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
