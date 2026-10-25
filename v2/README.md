@@ -26,6 +26,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/defense_selection.py         # momentum and stock-trend filters at the selection level
 .venv/bin/python v2/equity_defense.py            # drawdown control inside a fully invested stock book
 .venv/bin/python v2/allocation.py                # long-term stock + ETF allocations against a 15% max drawdown target
+.venv/bin/python v2/rp_robustness.py             # the chosen risk parity under other start months, costs, lookbacks, assets, sleeves
 ```
 
 | File | What |
@@ -47,6 +48,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `defense_selection.py` | momentum filter and stock-level trend filter added to the selection |
 | `equity_defense.py` | crash-day covariance min-var, sector risk parity, stress-beta cap, regime switch; all fully invested |
 | `allocation.py` | stock sleeve + Treasury / gold / TIPS / commodity ETFs: fixed mix, risk parity, vol target, drawdown control |
+| `rp_robustness.py` | robustness of the chosen allocation (A1 risk parity R1 + IEF + GLD) |
+| `live.py` | live use of the chosen allocation: target holdings, orders from your holdings, risk / market report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
 
@@ -379,11 +382,11 @@ Goal set on 2026-10-23: max drawdown ≤ 15% first, then as much return as possi
 
 | stock sleeve R1 (swan-beta return track) + | CAGR | Sharpe | max DD | worst year | CAGR 2004–14 / 2015–26 | GFC | COVID | 2022 |
 |---|---|---|---|---|---|---|---|---|
-| nothing (100% stocks) | 10.5% | 0.75 | 40% | −23% | – | −40% | −33% | −12% |
-| A0 60% / 20% IEF / 20% GLD | 9.4% | 0.97 | 22.5% | −8.7% | 10.3% / 8.5% | −18% | −21% | −12% |
+| nothing (100% stocks) | 10.6% | 0.76 | 41% | −23% | – | −40% | −33% | −12% |
+| A0 60% / 20% IEF / 20% GLD | 9.4% | 0.97 | 22.7% | −8.7% | 10.3% / 8.5% | −18% | −21% | −12% |
 | A5 A0 + 8% vol target (rest SHY) | 8.3% | 1.02 | 20.2% | −9.4% | 9.5% / 7.2% | −11% | −20% | −10% |
 | A6 A0 + drawdown control | 8.6% | 0.98 | 20.6% | −9.8% | 9.8% / 7.4% | −13% | −19% | −11% |
-| **A1 risk parity: R1, IEF, GLD** | **7.1%** | **1.08** | **15.7%** | −8.2% | 8.7% / 5.6% | +6% | −8% | −13% |
+| **A1 risk parity: R1, IEF, GLD** | **7.1%** | **1.09** | **15.5%** | −8.2% | 8.7% / 5.6% | +6% | −8% | −13% |
 | A2 risk parity + TIP + DBC | 5.4% | 0.94 | 15.8% | −7.2% | 6.3% / 4.6% | +2% | −7% | −10% |
 | A3 / A4 A2 + vol target / drawdown control | 5.0–5.2% | 0.94 | 15.2–15.8% | ~−7% | | | | |
 
@@ -392,8 +395,43 @@ With D0 as the sleeve the numbers are similar (A4 is the only variant at ≤ 15%
 **Conclusions**
 1. **The frontier is clear: about 7%/yr at a 15–16% max drawdown, 8–9% at 20–22%, 10–11% at 40%, and SPY's 10.8% at 55%.** Nothing tested, and nothing realistic without leverage, gets 20%/yr with a ≤ 15% drawdown over 2004–2026.
 2. **Inflation assets do not help.** Adding TIP and commodities (DBC) leaves the drawdown at ~16% and lowers the return by ~1.7%/yr. The vol target and drawdown control add little on top of risk parity; on the 60/20/20 mix they cut ~2 points of drawdown for ~1% of return.
-3. **Where the swan-beta selection matters:** in an equity-heavy mix it cuts the drawdown clearly (A0: 22.5% with R1 vs 31.6% with SPY). In risk parity, where stocks are only ~25–30% of the risk budget, it matters little (15.7% vs 17.5%).
+3. **Where the swan-beta selection matters:** in an equity-heavy mix it cuts the drawdown clearly (A0: 22.7% with R1 vs 31.6% with SPY). In risk parity, where stocks are only ~25–30% of the risk budget, it matters little (15.5% vs 17.5%).
 4. The 15–16% drawdown of the risk-parity mixes comes from 2022, when stocks and bonds fell together. Since 2015 their returns are ~5–6%/yr, because bonds have been weak.
+
+## Chosen allocation: robustness and live use
+
+Chosen on 2026-10-23: **A1 risk parity of the R1 sleeve, IEF and GLD** (inverse 1-year vol, split reset monthly, sleeve rebuilt quarterly). `rp_robustness.py`, 2004 → 2026-10:
+
+| change from the base | CAGR | Sharpe | max DD | worst year |
+|---|---|---|---|---|
+| **base** | **7.1%** | **1.09** | **15.5%** | −8.1% |
+| sleeve rebuilt in month 2 / 3 of the quarter | 7.0% / 7.1% | 1.08 / 1.09 | 15.6% | −8.2% |
+| costs 0.5% stocks, 0.2% ETFs | 7.0% | 1.08 | 15.7% | −8.2% |
+| vol lookback 6 / 24 months | 7.2% / 7.2% | 1.11 / 1.10 | 14.7% / 16.4% | −8.0% / −8.8% |
+| split reset quarterly | 7.2% | 1.09 | 15.7% | −8.0% |
+| TLT instead of IEF | 9.0% | 1.03 | 19.0% | −10.8% |
+| SHY instead of IEF | 3.3% | 1.39 | 6.9% | −3.3% |
+| no gold | 5.6% | 0.95 | 15.5% | −10.6% |
+| ends 2023-12 (before gold's run) | 6.6% | 1.03 | 15.5% | −8.1% |
+| sleeve of 30 / 50 / 75 stocks | 7.0% | 1.04–1.06 | 16.9% / 16.4% / 16.0% | ~−7% |
+| sleeve D0 (30 stocks, sector cap) | 6.9% | 1.05 | 16.2% | −7.2% |
+| sleeve SPY | 7.0% | 1.07 | 17.5% | −11.7% |
+
+The result does not hinge on timing, costs or the lookback: ~7% a year with a 15–17% max drawdown. Gold adds ~1.5%/yr (7.1% vs 5.6%); stopping at 2023-12, before gold's 2024–26 run, the mix still earns 6.6%. Longer bonds (TLT) buy return with drawdown; in 2022 they fell with stocks. A 30-stock sleeve, for small accounts, costs ~1 point of max drawdown.
+
+**Live use** (`v2/live.py`; everything it writes goes to `live/`, which is git-ignored because it holds your positions):
+
+```
+.venv/bin/python data/update_data.py                                     # 1. data up to date (~4 min)
+.venv/bin/python v2/live.py target --capital 20000 [--stocks 30 --whole]   # 2. target holdings
+.venv/bin/python v2/live.py orders --holdings live/holdings.csv            # 3. trades, sells first
+.venv/bin/python v2/live.py report --holdings live/holdings.csv            #    market, split, risk, drift
+```
+
+- Schedule: the split is reset on the first trading day of each month; the sleeve is rebuilt in January, April, July and October (`target` reuses the quarter's saved sleeve of the same size otherwise). Between dates, rebalance only if `report` flags a drift above 5%.
+- `holdings.csv` has columns `ticker,shares`, plus a `CASH` row in dollars. `orders` refuses to run if your holdings are worth more than 2% away from the capital the target was built for; re-run `target` with the actual value.
+- Small accounts: the default sleeve is ~160 stocks at ~$30–50 each per $20k, which needs fractional shares. Without them use `--stocks 30 --whole`: whole shares are rounded to the nearest share within the cash, leaving ~$50 and ≤ 1% off target per name. Stocks are only ~25–30% of the money; the rest is IEF and GLD.
+- The split moves with volatility: on 2026-10-23 it was stocks 28%, IEF 62%, GLD 11% (gold has been volatile). That is the rule as backtested, not a view.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
@@ -413,6 +451,7 @@ Known and kept as in the original: renormalising after the 3% filter can push a 
 - **`optdata_MVO2.xlsx` (Swan9's analyst targets) is look-ahead.** It has no date, and P_fwd only lines up with prices around May–Aug 2020, i.e. after the crash: OXY and BA targets are 0.4–0.5× their Feb-2020 price, and AAPL is still pre-split. The other S&P 100 optdata files match their filename dates (median P_fwd / price 1.03–1.11).
 - One set of inputs is enough. v2 reads only `data/SwanBeta`, `data/MVO_Components`, `data/optdata`, `data/prices` and `data/swans.csv`. The copies are redundant: `data/MVO Components/` (a subset of `data/MVO_Components/`), `dtw_result/dtw_data/`, and `Projects/Gradient Matrix Test/Swan10d/Code/`. The latter two have older ticker lists.
 - `All_SwanBeta100.xlsx` (102 tickers, up to Swan10D, exact) and `All_SwanBeta100_MVO2.xlsx` (95 tickers, closer to the 2020 index, Swan4/Swan8 off by up to 0.02, Swan10a/10b instead of 10D) are two versions of the same table. The baseline keeps `_MVO2` so it stays comparable with the original.
-- WBA and AVG are no longer on Yahoo. BK is downloaded as BNY.
+- WBA and AVG are no longer on Yahoo. BK is downloaded as BNY, and the 2026-05 BNY membership entry is read as BK.
+- MCD, OKE, PSA, WRB, VTRS and FERG had empty S&P500 price columns: Yahoo dropped them when the prices were frozen. `update_data.py` filled their full history on 2026-10-23, and `develop.py`, `allocation.py`, `defense.py` and `rp_robustness.py` were re-run (changes ≤ 0.5 points). The other caches (`experiments`, `explore`, `factor`, `robustness`, `equity_defense`, `defense_selection`) still come from the data before the fill.
 - S&P500 prices cover the Swan Beta file's tickers plus every member since 1996 that Yahoo still has (1,213 columns). A reused ticker can map an old member to a newer company with the same symbol; this has not been checked one by one.
 - ^OEX / ^GSPC are price-only; OEF (from 2000) and SPY (from 1993) are the total-return benchmarks in the price files.

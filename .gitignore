@@ -13,3 +13,6 @@ venv/
 
 # Notebook outputs
 output/
+
+# Live positions, orders and capital (personal; this repo is public)
+live/

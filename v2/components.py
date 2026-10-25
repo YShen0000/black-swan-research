@@ -35,7 +35,7 @@ TOTAL_RETURN = {"SP100": "OEF", "SP500": "SPY"}   # ETFs incl. dividends; ^OEX /
 @lru_cache
 def _sp500_periods():
     p = pd.read_csv(swan_beta.DATA / "universe/sp500_ticker_start_end.csv", parse_dates=["start_date", "end_date"])
-    p["ticker"] = p.ticker.str.replace(".", "-")   # Yahoo spelling
+    p["ticker"] = p.ticker.str.replace(".", "-").replace({"BNY": "BK"})   # Yahoo spelling; BK prices are stored as BK
     return p
 
 

@@ -26,14 +26,20 @@ html = urllib.request.urlopen(urllib.request.Request(
 wiki = pd.read_html(io.StringIO(html.decode()))[0]
 rows = {t.replace(".", "-"): (s, "wikipedia") for t, s in zip(wiki.Symbol, wiki["GICS Sector"])}
 
+old = HERE / "sectors.csv"   # keep earlier answers: Yahoo is only asked about tickers never classified before
+if old.exists():
+    for t, sec, src in pd.read_csv(old).itertuples(index=False):
+        rows.setdefault(t, (sec, src))
+
 sb = pd.read_excel(DATA / "SwanBeta/All_SwanBeta500.xlsx", index_col=0)["Sector"].dropna()
 for t, s in sb.items():
     rows.setdefault(str(t).replace(".", "-"), (s, "swanbeta"))
 
 INDICES = {"^OEX", "^GSPC", "SPY", "OEF"}
 tickers = set()
-for u in ["SP100", "SP500"]:
-    tickers |= set(pd.read_csv(DATA / f"prices/close_{u}.csv.gz", nrows=1).columns[1:]) - INDICES
+for u in ["SP100", "SP500"]:   # only stocks that traded in the past year need a new lookup; delisted ones are done
+    px = pd.read_csv(DATA / f"prices/close_{u}.csv.gz", index_col=0).iloc[-252:]
+    tickers |= set(px.columns[px.notna().any()]) - INDICES
 for t in sorted(tickers - set(rows)):
     try:
         s = yf.Ticker({"BK": "BNY"}.get(t, t)).info.get("sector")

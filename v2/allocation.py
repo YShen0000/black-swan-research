@@ -31,10 +31,11 @@ def month_ends(index):
     return index.to_series().groupby(index.to_period("M")).tail(1).index
 
 
-def run(assets, target_fn, control=None, cost=0.001):
+def run(assets, target_fn, control=None, cost=0.001, every=1):
     """assets: daily returns (incl. 'shy'); target_fn(date, history) -> weights of the risky mix at a month end.
-    control: None, 'vol' or 'dd'. Weights decided at month end are held (daily rebalanced) for the next month."""
-    ends = set(month_ends(assets.index))
+    control: None, 'vol' or 'dd'. Weights decided at month end are held (daily rebalanced) for the next month.
+    every: rebalance every `every` month ends (1 = monthly, 3 = quarterly)."""
+    ends = set(month_ends(assets.index)[::every])
     risky = [c for c in assets.columns if c != "shy"]
     w = pd.Series(0.0, index=assets.columns)
     w["shy"] = 1.0
@@ -69,9 +70,9 @@ def fixed(weights):
     return f
 
 
-def risk_parity(names):
+def risk_parity(names, lookback=252):
     def f(d, hist):
-        h = hist[names].iloc[-252:]
+        h = hist[names].iloc[-lookback:]
         ok = [c for c in names if h[c].iloc[-126:].notna().all()]
         inv = 1 / h[ok].std()
         return inv / inv.sum()
