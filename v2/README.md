@@ -537,13 +537,13 @@ Stock momentum does not beat the swan sleeve, and trend filters cut drawdowns bu
 
 ## Live strategy (from 2026-10-25): D1
 
-Half the money is the **core**: R1 swan-beta sleeve 50% / IEF 25% / GLD 25%, with R1 rebuilt and the core reset monthly. The other half is the **rotation** C3, in 4 equal tranches of 12.5% each. Each tranche holds the 3 strongest of SPY, EFA, EEM, VNQ, DBC, IEF, TLT and GLD by mean 3/6/12-month return, each only while above its 10-month average (else cash). The tranches are decided at the month end and 5, 10 and 15 trading days in. Backtest (4 tranches, 2005–26): 9.6%/yr, max DD 17.5%, worst year −5.9%, Sharpe 0.99.
+Half the money is the **core**: R1 swan-beta sleeve 70% / IEF 15% / GLD 15% (from 2026-10-26; 50/25/25 before), with R1 rebuilt and the core reset monthly. `--core-stocks` sets the stock share, and the rest is split equally between IEF and GLD. The other half is the **rotation** C3, in 4 equal tranches of 12.5% each. Each tranche holds the 3 strongest of SPY, EFA, EEM, VNQ, DBC, IEF, TLT and GLD by mean 3/6/12-month return, each only while above its 10-month average (else cash). The tranches are decided at the month end and 5, 10 and 15 trading days in. Backtest (4 tranches, 2005–26, `core_search.py`): 9.9%/yr, max DD 19.6%, worst year −5.4%, Sharpe 0.97, about 65% of the money in equity on average. With `--core-stocks 0.5` it is 9.6% / 17.5%; with 1.0, 10.4% / 25%.
 
 `v2/live.py` writes everything to `live/`, which is git-ignored because it holds your positions:
 
 ```
 .venv/bin/python data/update_data.py                                     # 1. data up to date (~4 min)
-.venv/bin/python v2/live.py target --capital 20000 [--stocks 30 --whole]   # 2. target: core + all 4 tranches as of now
+.venv/bin/python v2/live.py target --capital 20000 [--stocks 30 --whole] [--core-stocks 0.7]   # 2. target: core + all 4 tranches as of now
 .venv/bin/python v2/live.py orders --holdings live/holdings.csv            # 3. trades, sells first
 .venv/bin/python v2/live.py report --holdings live/holdings.csv            #    signals, tranches, market, drift, next dates
 .venv/bin/python v2/live.py check                                          #    self-check of the decision days
@@ -553,7 +553,7 @@ Half the money is the **core**: R1 swan-beta sleeve 50% / IEF 25% / GLD 25%, wit
 - **No state to keep:** every tranche is recomputed from the data as of its own latest decision day, so running `target` again on another day gives the same answer. Rotation signals were checked against the backtest: the weights are identical.
 - **Cash:** the rotation's cash slot (an asset below its average) goes in the `CASH` row. Keep it in the broker's money-market sweep or a T-bill ETF (SGOV / BIL, entered as CASH).
 - **`holdings.csv`:** columns `ticker,shares` plus a `CASH` row in dollars. `orders` refuses to run if your holdings are worth more than 2% away from the target's capital. Adjustments under `--min-trade` ($50) are skipped, but opening or closing a position never is.
-- **Small accounts:** stocks are 25% of the money, so $20k gives ~$31 per stock in the default 163-stock sleeve. That needs fractional shares; without them use `--stocks 30 --whole` (~$170 per stock, ≤ 1.4% off target per name, ~$800 cash).
+- **Small accounts:** single stocks are 35% of the money, so $20k gives ~$43 per stock in the default 163-stock sleeve. That needs fractional shares; without them use `--stocks 30 --whole` (~$230 per stock; `core_search.py`: ~0.3%/yr less).
 
 ## D1's core: optimisers, number of stocks, stock share
 

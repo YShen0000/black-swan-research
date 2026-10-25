@@ -1,12 +1,13 @@
 """Live use of the chosen strategy, D1 (strategy_search.py / strategy_robustness.py):
 
-  half the money: core   R1 swan-beta stock sleeve 50%, IEF 25%, GLD 25%   (R1 rebuilt monthly, core reset monthly)
+  half the money: core   R1 swan-beta stock sleeve 70%, IEF 15%, GLD 15%   (R1 rebuilt monthly, core reset monthly;
+                         --core-stocks sets the stock share, the rest split equally between IEF and GLD)
   half the money: rotation, in 4 equal tranches. Each tranche holds the 3 strongest of SPY, EFA, EEM, VNQ, DBC, IEF,
                   TLT, GLD by mean 3/6/12-month return, an asset only while above its 10-month average (else cash).
                   Tranche 0 is decided at each month end, tranches 5 / 10 / 15 that many trading days into the month.
 
     python data/update_data.py                                          # 1. bring the data up to date
-    python v2/live.py target --capital 20000 [--stocks 30] [--whole]    # 2. target holdings (all tranches as of now)
+    python v2/live.py target --capital 20000 [--stocks 30] [--whole] [--core-stocks 0.7]   # 2. target holdings
     python v2/live.py orders --holdings live/holdings.csv               # 3. trades from your holdings to the target
     python v2/live.py report [--holdings live/holdings.csv]             #    signals, market and drift, any time
     python v2/live.py check                                             #    self-check of the decision-day logic
@@ -17,7 +18,8 @@ trades. `report` prints the next dates. Everything is saved in live/ (git-ignore
 
 holdings.csv: two columns, ticker,shares (fractional allowed). Use CASH for cash in dollars: the rotation's cash slot
 is meant to sit in the broker's money-market sweep (or a T-bill ETF such as SGOV / BIL, entered as CASH).
-Backtest reference (2005-2026, 4 tranches): 9.6%/yr, max drawdown 17.5%, worst calendar year -5.9%, Sharpe 0.99.
+Backtest reference (2005-2026, 4 tranches, core_search.py): core 70/15/15 9.9%/yr, max drawdown 19.6%, worst year
+-5.4%, Sharpe 0.97; core 50/25/25 9.6% / 17.5% / -5.9%; core 100/0/0 10.4% / 25.0% / -10.4%.
 """
 import argparse
 import datetime
@@ -36,7 +38,7 @@ import swan_beta
 LIVE = Path(__file__).resolve().parent.parent / "live"
 U = "SP500"
 ROT = ["SPY", "EFA", "EEM", "VNQ", "DBC", "IEF", "TLT", "GLD"]
-CORE = {"IEF": 0.25, "GLD": 0.25}   # + stocks 0.5
+CORE_STOCKS = 0.7                   # rest of the core: IEF and GLD, equally
 OFFSETS = (0, 5, 10, 15)            # 0 = month end
 ROTATION_SHARE = 0.5
 
@@ -103,18 +105,19 @@ def tranches(r):
     return {o: (d, f(d, r.loc[:d])) for o, d in tranche_days(r.index).items()}
 
 
-def weights(t, stocks=None, new_sleeve=False):
+def weights(t, stocks=None, new_sleeve=False, core_stocks=CORE_STOCKS):
     s = sleeve(t, stocks, new_sleeve)
-    core = pd.concat([s * 0.5, pd.Series(CORE)]) * (1 - ROTATION_SHARE)
+    bonds_gold = (1 - core_stocks) / 2
+    core = pd.concat([s * core_stocks, pd.Series({"IEF": bonds_gold, "GLD": bonds_gold})]) * (1 - ROTATION_SHARE)
     tr = tranches(rotation_returns())
     rot = sum(w for _, w in tr.values()) / len(tr) * ROTATION_SHARE
     w = core.add(rot, fill_value=0)
     return w[w > 0], s, tr
 
 
-def target(capital, stocks=None, whole=False, new_sleeve=False):
+def target(capital, stocks=None, whole=False, new_sleeve=False, core_stocks=CORE_STOCKS):
     t = data_end() + datetime.timedelta(days=1)
-    w, s, tr = weights(t, stocks, new_sleeve)
+    w, s, tr = weights(t, stocks, new_sleeve, core_stocks)
     w = w.drop("cash", errors="ignore")
     px = last_prices(w.index)
     shares = capital * w / px
@@ -174,7 +177,7 @@ def orders(holdings_file, min_trade=50.0):
     print(o.round(4).to_string())
 
 
-def report(holdings_file=None):
+def report(holdings_file=None, core_stocks=CORE_STOCKS):
     t = data_end() + datetime.timedelta(days=1)
     close = swan_beta.load_prices(U)
     print(f"data through {data_end().date()}")
@@ -193,7 +196,7 @@ def report(holdings_file=None):
     sig = pd.DataFrame({"score (3/6/12m)": {a: R.score(a) for a in ROT}, "above 10m avg": {a: R.up(a) for a in ROT}})
     print("\nrotation signals today (top 3 by score, held only if above the average):")
     print(sig.sort_values("score (3/6/12m)", ascending=False).to_string(float_format=lambda x: f"{x:+.1%}"))
-    w, s, tr = weights(t)
+    w, s, tr = weights(t, core_stocks=core_stocks)
     print_tranches(tr)
 
     sec = s.groupby(C.sectors()(s.index)).sum().sort_values(ascending=False)
@@ -218,7 +221,8 @@ def report(holdings_file=None):
 
     print("\nnext decision days (run after the close, trade the next day): " + ", ".join(
         f"{'month end' if o == 0 else f'day {o}'} {d.date()}" for o, d in sorted(next_days(data_end()).items(), key=lambda x: x[1])))
-    print("backtest reference: 9.6%/yr, max drawdown 17.5%, worst year -5.9%")
+    ref = {0.5: "9.6%/yr, max drawdown 17.5%", 0.7: "9.9%/yr, max drawdown 19.6%", 1.0: "10.4%/yr, max drawdown 25.0%"}
+    print(f"backtest reference, core stocks {core_stocks:.0%}: " + ref.get(core_stocks, "not backtested (50 / 70 / 100% are)"))
 
 
 def check():
@@ -243,14 +247,16 @@ if __name__ == "__main__":
     ap.add_argument("--new-sleeve", action="store_true", help="rebuild this month's sleeve")
     ap.add_argument("--holdings")
     ap.add_argument("--min-trade", type=float, default=50.0)
+    ap.add_argument("--core-stocks", type=float, default=CORE_STOCKS,
+                    help="stock share of the core (default 0.7; 0.5 and 1.0 also backtested), rest IEF / GLD equally")
     a = ap.parse_args()
     if a.command == "target":
         if not a.capital:
             raise SystemExit("--capital is required")
-        target(a.capital, a.stocks, a.whole, a.new_sleeve)
+        target(a.capital, a.stocks, a.whole, a.new_sleeve, a.core_stocks)
     elif a.command == "orders":
         orders(a.holdings or LIVE / "holdings.csv", a.min_trade)
     elif a.command == "check":
         check()
     else:
-        report(a.holdings)
+        report(a.holdings, a.core_stocks)
