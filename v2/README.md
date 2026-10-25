@@ -33,6 +33,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/search_sleeves.py            # momentum and swan + momentum stock sleeves (~5 min, cached)
 .venv/bin/python v2/strategy_search.py           # momentum, trend, dual momentum, rotation, combos vs a fixed bar
 .venv/bin/python v2/strategy_robustness.py       # overfitting checks and 4-tranche versions of the two best
+.venv/bin/python v2/core_search.py [build]       # D1's core: Barra / swan-cap min-var / top-N sleeves x stock share
 ```
 
 | File | What |
@@ -61,6 +62,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `search_sleeves.py` | monthly R1, 12-1 momentum (M1) and swan + momentum (M2) sleeves |
 | `strategy_search.py` | beyond swan beta: stock momentum, trend (GTAA), dual momentum, multi-asset and sector rotation, combos |
 | `strategy_robustness.py` | trend length, lookbacks, number held, decision day, costs, leave-one-asset-out, tranches |
+| `core_search.py` | D1's core retested: Barra min-var, swan-beta cap + min-var, top 20 / 30 vs R1; core stock share 50 / 70 / 100% |
 | `live.py` | live use of D1: target holdings (core + 4 rotation tranches), orders from your holdings, signals / market / drift report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -552,6 +554,38 @@ Half the money is the **core**: R1 swan-beta sleeve 50% / IEF 25% / GLD 25%, wit
 - **Cash:** the rotation's cash slot (an asset below its average) goes in the `CASH` row. Keep it in the broker's money-market sweep or a T-bill ETF (SGOV / BIL, entered as CASH).
 - **`holdings.csv`:** columns `ticker,shares` plus a `CASH` row in dollars. `orders` refuses to run if your holdings are worth more than 2% away from the target's capital. Adjustments under `--min-trade` ($50) are skipped, but opening or closing a position never is.
 - **Small accounts:** stocks are 25% of the money, so $20k gives ~$31 per stock in the default 163-stock sleeve. That needs fractional shares; without them use `--stocks 30 --whole` (~$170 per stock, ≤ 1.4% off target per name, ~$800 cash).
+
+## D1's core: optimisers, number of stocks, stock share
+
+`core_search.py`, fixed in advance. All sleeves are S&P500 point-in-time, rebuilt monthly, ≤ 25% per sector:
+- K0 R1: lowest third by blend, inverse vol (current, 81–163 stocks)
+- K1 / K2: lowest 20 / 30 by blend, inverse vol
+- K3 Barra min-var: factor-model minimum variance over the lowest third, ≤ 5% per stock, at most 30 names
+- K4 swan cap: factor-model min-var over all candidates with portfolio blend ≤ 0.5, ≤ 5% per stock, at most 30 names
+
+D1 here = half core (stocks / IEF / GLD) + half rotation, in 4 tranches, 2005–26. The adoption rule: beat the current D1 on Sharpe in 2005–14, 2015–26 and without COVID, with max DD ≤ 25%.
+
+| D1 with core 50/25/25 | CAGR | Sharpe | max DD | Sharpe 05–14 / 15–26 / ex-COVID | stocks alone: CAGR / max DD |
+|---|---|---|---|---|---|
+| **K0 R1 (current)** | **9.6%** | **0.99** | 17.5% | 1.03 / 0.95 / 1.05 | 10.1% / 41% |
+| K1 top 20 | 9.2% | 0.97 | 17.0% | 1.03 / 0.91 / 1.02 | 8.6% / 43% |
+| K2 top 30 | 9.3% | 0.97 | 16.6% | 1.03 / 0.92 / 1.02 | 8.9% / 41% |
+| K3 Barra min-var | 9.0% | 0.95 | 16.9% | 0.97 / 0.94 / 0.99 | 7.6% / 44% |
+| K4 swan cap + min-var | 9.0% | 0.96 | 16.7% | 0.99 / 0.94 / 1.01 | 7.9% / 42% |
+
+**No change adopted.**
+- The optimisers lose 2–2.5%/yr as stock books, and ~0.6%/yr inside D1. Their 2005–14 results are weak because min-variance piles into the calmest names.
+- Top 20 / 30 cost ~0.3%/yr, with slightly lower drawdown. They are a fine practical choice for accounts without fractional shares.
+
+**Stock share.** Through the rotation's SPY / EFA / EEM / VNQ, D1 already holds 55% equity on average (25–75%), even though single stocks are 25%:
+
+| D1 (K0), core stocks / IEF / GLD | average equity | CAGR | Sharpe | max DD | worst year | 2005–14 / 2015–26 | GFC | COVID |
+|---|---|---|---|---|---|---|---|---|
+| 50/25/25 (current) | 55% | 9.6% | 0.99 | 17.5% | −5.9% | 10.9% / 8.5% | −3% | −14% |
+| 70/15/15 | 65% | 9.9% | 0.97 | 19.6% | −5.4% | 11.1% / 8.9% | −10% | −18% |
+| 100/0/0 | 80% | 10.4% | 0.92 | 25.0% | −10.4% | 11.5% / 9.5% | −20% | −23% |
+
+Each step adds 0.3–0.5%/yr in both sub-periods and 2–5 points of max drawdown. 70/15/15 keeps the Sharpe almost unchanged. 100/0/0 reaches 10.4% but sits at the 25% limit, and its ex-COVID Sharpe (1.01) is below the current 1.05.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).

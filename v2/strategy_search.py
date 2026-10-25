@@ -165,11 +165,12 @@ def evaluate(s, spy, cash):
     return st
 
 
-def run_all(r, fns, **kw):
+def run_all(r, fns, stock=("R1", "M1", "M2"), **kw):
+    """stock: the stock-sleeve columns, which cost 0.3% per unit of weight change (ETFs 0.1%)."""
     assets = r.copy()
     assets["shy"] = 0.0   # A.run's idle leg, unused: T-bills are the explicit "cash" asset
     cost = pd.Series(0.001, index=assets.columns)
-    cost[["R1", "M1", "M2"]] = 0.003
+    cost[list(stock)] = 0.003
     cost[["cash", "shy"]] = 0.0
     return {k: A.run(assets, f, None, cost, drift=True, **kw) for k, f in fns.items()}
 
