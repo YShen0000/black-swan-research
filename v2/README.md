@@ -532,7 +532,7 @@ Rejected, in all three mixes. By the time a selloff is visible, most of the loss
 Stock momentum does not beat the swan sleeve, and trend filters cut drawdowns but give up too much after 2015. Dual momentum whipsaws. The one new source that works is **multi-asset rotation** (C3): hold the 3 strongest of SPY, EFA, EEM, VNQ, DBC, IEF, TLT and GLD by mean 3/6/12-month return, each only while above its 10-month average. It also combines well with the swan core (D1).
 
 **Overfitting checks** (`strategy_robustness.py`):
-- Trend length (8 / 12 months), lookbacks, top 2 / 4, costs ×3 and leaving out any one asset all move the CAGR by less than 1.5 points. Leaving out IEF or TLT raises the drawdown (to 26%), and leaving out gold costs ~1%/yr.
+- Trend length (8 / 12 months), lookbacks, top 2 / 4, costs ×3 and leaving out any one asset all move the CAGR by less than 2 points (12-month lookback alone is the weakest: C3 9.4%). Leaving out IEF or TLT raises the drawdown (to 26%), and leaving out gold costs ~1%/yr.
 - **The decision day matters a lot.** Decided 10 trading days into the month instead of at month end, C3 lost 22% in COVID instead of 0%. The month-end numbers above are partly timing luck.
 - Splitting the money into **4 tranches** decided at the month end and 5, 10, 15 trading days in removes that luck. These are the numbers to trust:
 
