@@ -28,6 +28,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/allocation.py                # long-term stock + ETF allocations against a 15% max drawdown target
 .venv/bin/python v2/rp_robustness.py             # the chosen risk parity under other start months, costs, lookbacks, assets, sleeves
 .venv/bin/python v2/event_triggers.py            # event-triggered vs calendar rebuilds and resets
+.venv/bin/python v2/swan_positioning.py          # swan beta for stock sizing, and a SPY -> D0 switch in selloffs
 ```
 
 | File | What |
@@ -51,6 +52,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `allocation.py` | stock sleeve + Treasury / gold / TIPS / commodity ETFs: fixed mix, risk parity, vol target, drawdown control |
 | `rp_robustness.py` | robustness of the chosen allocation (A1 risk parity R1 + IEF + GLD) |
 | `event_triggers.py` | sleeve rebuilt monthly / on new swans, split reset on drift or drawdown, vs the calendar |
+| `swan_positioning.py` | crash-loss sizing from the predicted swan beta; switch from SPY to D0 in selloffs |
 | `live.py` | live use of the chosen allocation: target holdings, orders from your holdings, risk / market report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -448,6 +450,35 @@ The result does not hinge on timing, costs or the lookback: ~7% a year with a 15
 | P2 base + split reset when ^OEX first closes 10% / 15% / 20% below its high | 7.0% | 1.080 | 15.6% | 1.381 / 0.835 | 1.102 | 0.88 | −6.7% |
 
 All within noise. The sleeve hardly changes between rebuilds (97% of the stocks stay from one month to the next, 94% between quarters), because both halves of the score move slowly: the swan half only when a new swan is confirmed (7 times since 2004), the market-beta half by one month of a 1-year window. P2's small gain comes from COVID and fails the adoption rule (no better in 2004–14 or without COVID). Monthly rebuilding is adopted for live use because it is one step instead of two, not because it is better.
+
+## Where the swan signal fits: sizing and switching
+
+`swan_positioning.py`, rules fixed in advance (see the file), monthly sleeves, drifting weights, 2004 → 2026-10.
+
+**1. Crash-loss sizing.** The stock weight is w = min(1, 15% / (predicted sleeve swan beta × predicted index drop)), and the rest goes to IEF / GLD by inverse vol. The control is the same sleeve at a fixed weight equal to the variant's average.
+
+| | CAGR | Sharpe | max DD | Sharpe 2004–14 / 2015–26 / ex-COVID | avg stock weight |
+|---|---|---|---|---|---|
+| C1 R1, mean past drop | 9.7% | 0.755 | 36.8% | 0.80 / 0.72 / 0.89 | 92% |
+| control R1 fixed 92% | 9.9% | 0.769 | 37.8% | 0.78 / 0.76 / 0.88 | |
+| C2 R1, worst past drop | 8.1% | 0.836 | 28.1% | 0.90 / 0.77 / 0.94 | 65% |
+| control R1 fixed 65% | 8.7% | 0.920 | 25.3% | 0.99 / 0.85 / 1.03 | |
+| C2 SPY | 7.4% | 0.951 | 23.5% | 0.87 / 1.03 / 0.97 | 37% |
+
+Rejected. The variants never beat their fixed controls, and the predicted loss is about half the realised one. In the GFC and COVID the sleeve's swan beta was ~0.75–1.0, against a predicted ~0.5, so C1 lost 30–33% on a 15% budget. The sizing also swings with the sleeve's market beta: C2 would be 90–100% in stocks in 2024–26. The signal ranks well (which stocks fall less), but its level is not a usable loss forecast.
+
+**2. Switch SPY → D0 in selloffs.** The switch is made once ^OEX closes 10% (W1, 16 selloffs) or 15% (W2, 7) below its 1-year high, and reversed when it is back within 5%.
+
+| stocks only | CAGR | Sharpe | max DD | Sharpe 2004–14 / 2015–26 / ex-COVID | swans with a smaller loss than SPY |
+|---|---|---|---|---|---|
+| SPY | 10.8% | 0.644 | 55.2% | 0.48 / 0.82 / 0.70 | |
+| D0 held all the time | 9.4% | 0.702 | 40.9% | 0.79 / 0.62 / 0.78 | 7 of 7 |
+| W1 switch at 10% | 8.7% | 0.611 | 45.0% | 0.60 / 0.62 / 0.70 | 3 of 7 |
+| W2 switch at 15% | 9.1% | 0.622 | 44.8% | 0.56 / 0.68 / 0.74 | 2 of 7 |
+
+Rejected, in all three mixes. By the time a selloff is visible, most of the loss has happened. The switch then sells the index near the bottom and misses the rebound (COVID, 2015, 2018); only the slow GFC helps.
+
+**What this says about the concept:** the swan signal works as a *standing* choice of which stocks to hold. D0 or R1 lost less than SPY in every swan since 2004, by about a quarter to a half. It does not work as timing or as a loss forecast. Its cost is lagging strong bull markets: since 2015 R1 alone returned 9.9% a year vs 13.6% for SPY. In a mix it lets you hold more stock for the same drawdown. At ~20–24% max DD, R1 adds ~0.3–0.5%/yr over SPY across the full period, but since 2015 it is behind.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
