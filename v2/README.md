@@ -38,6 +38,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/factor_lab.py [build]        # swan beta and 10 price factors: rank IC and quintiles, 2005-15 vs 2016-26
 .venv/bin/python v2/mean_reversion.py            # RSI(2) short-term mean reversion on SPY and sector ETFs
 .venv/bin/python v2/return_search.py [build]     # aggressive rotation, trend-timed QQQ / SPY, timed swan factor
+.venv/bin/python v2/swan_window.py [build]       # which past swans to use: last 3 / 5 / all / severe / recency / median
+.venv/bin/python v2/stop_loss.py                 # trailing stops per stock and a drawdown brake on D1
 ```
 
 | File | What |
@@ -71,6 +73,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `factor_lab.py` | swan beta as a factor next to market beta, volatility, momentum, reversal, 52-week high, trend, size |
 | `mean_reversion.py` | RSI(2) mean reversion on daily closes (the daily stand-in for intraday trading) |
 | `return_search.py` | aggressive rotation (top 1 / 2 / 3 of 10 incl. QQQ, IWM; sectors), trend-timed QQQ / SPY, timed swan factor |
+| `swan_window.py` | which past swans the score uses, and whether swans add anything over market beta |
+| `stop_loss.py` | stock trailing stops (15% / 25%) and a D1 drawdown brake (10% / 15%) |
 | `live.py` | live use of D1: target holdings (core + 4 rotation tranches), orders from your holdings, signals / market / drift report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -669,6 +673,37 @@ Concentrating the rotation (top 1–2) adds drawdown, not return. The only highe
 | C3 rotation | 10.3% / 20.2% | 13.8% / 29.1% | 16.9% / 37.1% |
 
 20% needs about 2.5× and a ~45% drawdown. **Without leverage, the robust ceiling with a max drawdown of 20–25% is about 10–11% a year.** D1 70/15/15 remains the live strategy, because it has the best return per unit of drawdown found here.
+
+## Choosing the swans, and stop-losses
+
+**Which past swans** (`swan_window.py`). The score is ½ swan part + ½ market beta, R1's rule, D1 70/15/15 with 4 tranches. The pick column is the mean actual beta in the next swan of the lowest third picked (Swan5–Swan11, lower is better); the next column counts the swans where the window beats W5.
+
+| swan part | pick | beats W5 | sleeve alone CAGR / max DD | D1 CAGR / Sharpe / max DD |
+|---|---|---|---|---|
+| **W5 mean of the last 5 (current)** | 0.568 | – | 10.2% / 40.6% | 10.0% / 0.98 / 19.1% |
+| W3 last 3 | 0.575 | 3 of 7 | 10.2% / 41.0% | 10.0% / 0.98 / 19.1% |
+| WA all since 1987 | 0.570 | 2 | 10.0% / 40.6% | 9.9% / 0.97 / 19.1% |
+| WS severe only (drop ≥ 25%) | 0.582 | 3 | 9.8% / 43.6% | 9.8% / 0.96 / 19.7% |
+| WR recency-weighted (half-life 2) | 0.569 | 4 | 10.1% / 40.8% | 9.9% / 0.98 / 19.0% |
+| WM median of the last 5 | 0.566 | 4 | 9.8% / 41.3% | 9.8% / 0.97 / 19.3% |
+| W0 no swans, market beta only | 0.577 | 2 | 9.3% / 42.8% | 9.6% / 0.96 / 19.2% |
+
+Which swans are used makes no difference; none passes the adoption rule (better picks in ≥ 5 of 7 swans and a better D1 Sharpe in both halves and without COVID). Using swans at all helps a little: without them the sleeve earns 0.9%/yr less and D1 0.4%/yr less.
+
+**Stop-losses** (`stop_loss.py`, on D1 70/15/15). The adoption rule is a lower max DD with no lower Sharpe:
+
+| | CAGR | Sharpe 05–14 / 15–26 / ex-COVID | max DD | GFC | COVID | fires |
+|---|---|---|---|---|---|---|
+| **D1 (live)** | **9.9%** | 1.01 / 0.95 / 1.05 | **19.6%** | −10% | −18% | – |
+| stock trailing stop 15% (cash until the next rebuild) | 9.9% | 1.02 / 0.98 / 1.05 | 20.2% | −11% | −13% | 56 per year |
+| stock trailing stop 25% | 9.9% | 1.01 / 0.96 / 1.05 | 19.6% | −11% | −16% | 13 per year |
+| brake: core stocks to T-bills at 10% below the high, back within 5% | 8.6% | 1.04 / 0.79 / 1.00 | 17.7% | +1% | −14% | 0.6 per year |
+| brake at 15% / 7.5% | 9.0% | 0.99 / 0.87 / 1.03 | 19.3% | −5% | −15% | 0.2 per year |
+
+None adopted.
+- Stock stops cut fast crashes (COVID −13% instead of −18%) but not slow ones. In 2008 the stopped names were bought back at each monthly rebuild and fell again, so the max DD does not improve.
+- The brake does lower the max DD, but it stays out after rebounds and costs 2.3%/yr since 2015.
+- D1's drawdown is already capped by its structure: half in rotation with a trend rule, plus bonds and gold.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
