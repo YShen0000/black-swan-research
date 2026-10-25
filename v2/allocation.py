@@ -60,7 +60,7 @@ def run(assets, target_fn, control=None, cost=0.001, every=1, dates=(), drift=Fa
                 share = 1.0 if dd <= DD_START else max(DD_MIN_SHARE, 1 - (dd - DD_START) / (DD_FLOOR - DD_START) * (1 - DD_MIN_SHARE))
             new = (target * share).reindex(assets.columns).fillna(0)
             new["shy"] += 1 - share
-            out[-1] -= (new - w).abs().sum() * cost
+            out[-1] -= ((new - w).abs() * cost).sum()   # cost: a number, or a Series per asset
             w, last = new, new.copy()
     return pd.Series(out, index=assets.index)
 

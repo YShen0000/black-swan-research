@@ -30,6 +30,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/event_triggers.py            # event-triggered vs calendar rebuilds and resets
 .venv/bin/python v2/swan_positioning.py          # swan beta for stock sizing, and a SPY -> D0 switch in selloffs
 .venv/bin/python v2/frontier.py                  # R1 at 50 / 60 / 70% with IEF + GLD, for a 20-25% drawdown target
+.venv/bin/python v2/search_sleeves.py            # momentum and swan + momentum stock sleeves (~5 min, cached)
+.venv/bin/python v2/strategy_search.py           # momentum, trend, dual momentum, rotation, combos vs a fixed bar
+.venv/bin/python v2/strategy_robustness.py       # overfitting checks and 4-tranche versions of the two best
 ```
 
 | File | What |
@@ -55,6 +58,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `event_triggers.py` | sleeve rebuilt monthly / on new swans, split reset on drift or drawdown, vs the calendar |
 | `swan_positioning.py` | crash-loss sizing from the predicted swan beta; switch from SPY to D0 in selloffs |
 | `frontier.py` | R1 at 50 / 60 / 70% of the money with IEF + GLD (equal or inverse vol), vs SPY at the same weights |
+| `search_sleeves.py` | monthly R1, 12-1 momentum (M1) and swan + momentum (M2) sleeves |
+| `strategy_search.py` | beyond swan beta: stock momentum, trend (GTAA), dual momentum, multi-asset and sector rotation, combos |
+| `strategy_robustness.py` | trend length, lookbacks, number held, decision day, costs, leave-one-asset-out, tranches |
 | `live.py` | live use of the chosen allocation: target holdings, orders from your holdings, risk / market report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -500,6 +506,45 @@ Rejected, in all three mixes. By the time a selloff is visible, most of the loss
 - The equal IEF/GLD split earns ~0.6–0.8%/yr more than inverse vol, because it holds more gold. It is still ahead to 2023-12, before gold's run.
 - The swan sleeve's gain shows up in drawdown: R1 at 50% has the max DD of SPY at ~35%, and earns ~0.4%/yr more. Since 2015, SPY mixes earn ~2%/yr more at the same weight, with more drawdown.
 - The current risk parity needed 44 months to regain its 2020-08 high, because of the 2022 bond selloff. The 50–60% mixes recovered from the GFC in 17–18 months.
+
+## Beyond swan beta: strategy search
+
+`strategy_search.py` sets its variants and its bar in advance. It uses stocks and ETFs only (no leverage, no shorting), with monthly decisions, drifting weights and costs; results are scored from 2005-01. The bar is:
+- Q1 CAGR ≥ 10%
+- Q2 max DD ≤ 25%
+- Q3 CAGR ≥ 8% in both 2005–14 and 2015–26
+- Q4 Sharpe ≥ SPY's in both sub-periods
+- Q5 Sharpe without COVID ≥ that of R1 50/25/25
+
+| | CAGR | Sharpe | max DD | 2005–14 / 2015–26 CAGR | Sharpe ex-COVID | bars passed |
+|---|---|---|---|---|---|---|
+| SPY | 10.8% | 0.64 | 55% | 7.6% / 13.6% | 0.70 | 2 |
+| R1 50 / IEF 25 / GLD 25 | 8.6% | 0.97 | 21% | 9.3% / 8.1% | 1.04 | 4 |
+| M1 12-1 momentum stocks | 8.5% | 0.54 | 50% | 7.3% / 9.6% | 0.60 | 0 |
+| M2 swan + momentum stocks | 9.2% | 0.65 | 45% | 8.8% / 9.5% | 0.74 | 1 |
+| B1 GTAA-5 trend (Faber) | 5.8% | 0.76 | 14% | 6.1% / 5.5% | 0.81 | 2 |
+| B3 R1 50/25/25 + trend on each part | 6.2% | 0.92 | 12% | 8.6% / 4.1% | 0.95 | 1 |
+| C1 dual momentum (GEM) | 8.2% | 0.58 | 34% | 9.8% / 6.9% | 0.70 | 0 |
+| C3 rotation, top 3 of 8 asset ETFs | 11.3% | 0.85 | 21% | 12.7% / 10.1% | 0.85 | 4 |
+| C5 sector rotation | 9.6% | 0.68 | 26% | 8.0% / 10.9% | 0.72 | 1 |
+| D1 half R1 50/25/25, half C3 | 10.0% | 1.02 | 16% | 11.1% / 9.2% | 1.04 | 4 |
+
+Stock momentum does not beat the swan sleeve, and trend filters cut drawdowns but give up too much after 2015. Dual momentum whipsaws. The one new source that works is **multi-asset rotation** (C3): hold the 3 strongest of SPY, EFA, EEM, VNQ, DBC, IEF, TLT and GLD by mean 3/6/12-month return, each only while above its 10-month average. It also combines well with the swan core (D1).
+
+**Overfitting checks** (`strategy_robustness.py`):
+- Trend length (8 / 12 months), lookbacks, top 2 / 4, costs ×3 and leaving out any one asset all move the CAGR by less than 1.5 points. Leaving out IEF or TLT raises the drawdown (to 26%), and leaving out gold costs ~1%/yr.
+- **The decision day matters a lot.** Decided 10 trading days into the month instead of at month end, C3 lost 22% in COVID instead of 0%. The month-end numbers above are partly timing luck.
+- Splitting the money into **4 tranches** decided at the month end and 5, 10, 15 trading days in removes that luck. These are the numbers to trust:
+
+| 4 tranches | CAGR | Sharpe | max DD | worst year | 2005–14 / 2015–26 | Sharpe ex-COVID | GFC | COVID | 2022 |
+|---|---|---|---|---|---|---|---|---|---|
+| C3 rotation | 10.3% | 0.81 | 20.2% | −10.4% | 12.1% / 8.8% | 0.86 | +7% | −12% | −7% |
+| **D1 half R1 50/25/25, half C3** | **9.6%** | **0.99** | **17.5%** | −5.9% | 10.9% / 8.5% | 1.05 | −3% | −14% | −9% |
+
+- D1 beats the R1 core on CAGR (+1%/yr), max DD (17.5% vs 21%) and Sharpe in both sub-periods. Its edge is modest and not steady: it beats the core in only 52% of rolling 5-year windows, and SPY in 23%. Its worst 5-year CAGR is 3.7%, against 5.2% for the core.
+- 2012–18 was weak for rotation: C3 earned 5.6%/yr while SPY earned 12.6%.
+
+**Conclusion.** No variant clears all five bars once timing luck is removed. Robust unlevered results top out around 9.5–10% a year with a 17–20% max drawdown. The 2015–26 bar against SPY is the hardest, because US large caps returned 13.6% a year then. Swan beta alone is not enough: it is a good defensive equity sleeve, and rotation adds a second, trend-based return source. Not yet tested, for lack of data: fundamental factors (quality, value, profitability).
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
