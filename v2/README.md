@@ -29,6 +29,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/rp_robustness.py             # the chosen risk parity under other start months, costs, lookbacks, assets, sleeves
 .venv/bin/python v2/event_triggers.py            # event-triggered vs calendar rebuilds and resets
 .venv/bin/python v2/swan_positioning.py          # swan beta for stock sizing, and a SPY -> D0 switch in selloffs
+.venv/bin/python v2/frontier.py                  # R1 at 50 / 60 / 70% with IEF + GLD, for a 20-25% drawdown target
 ```
 
 | File | What |
@@ -53,6 +54,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `rp_robustness.py` | robustness of the chosen allocation (A1 risk parity R1 + IEF + GLD) |
 | `event_triggers.py` | sleeve rebuilt monthly / on new swans, split reset on drift or drawdown, vs the calendar |
 | `swan_positioning.py` | crash-loss sizing from the predicted swan beta; switch from SPY to D0 in selloffs |
+| `frontier.py` | R1 at 50 / 60 / 70% of the money with IEF + GLD (equal or inverse vol), vs SPY at the same weights |
 | `live.py` | live use of the chosen allocation: target holdings, orders from your holdings, risk / market report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -479,6 +481,25 @@ Rejected. The variants never beat their fixed controls, and the predicted loss i
 Rejected, in all three mixes. By the time a selloff is visible, most of the loss has happened. The switch then sells the index near the bottom and misses the rebound (COVID, 2015, 2018); only the slow GFC helps.
 
 **What this says about the concept:** the swan signal works as a *standing* choice of which stocks to hold. D0 or R1 lost less than SPY in every swan since 2004, usually about half as much. R1's smallest gap was COVID (−32.8% vs −33.7%), its largest 2025 (−3.9% vs −18.8%). It does not work as timing or as a loss forecast. Its cost is lagging strong bull markets: since 2015 R1 alone returned 9.9% a year vs 13.6% for SPY. In a mix it lets you hold more stock for the same drawdown. At ~20–24% max DD, R1 adds ~0.3–0.5%/yr over SPY across the full period, but since 2015 it is behind.
+
+## Higher-return mixes for a 20–25% drawdown target
+
+`frontier.py`: monthly sleeve and reset, drifting weights, 2004 → 2026-10. In the "equal" rows, IEF and GLD split the rest equally.
+
+| | CAGR | Sharpe | max DD | worst year | 2004–14 CAGR / max DD | 2015–26 CAGR / max DD | GFC | COVID | 2022 | months to recover |
+|---|---|---|---|---|---|---|---|---|---|---|
+| R1 50% equal | 8.8% | 1.00 | 21.0% | −7.2% | 9.6% / 21.0% | 8.1% / 17.1% | −14% | −17% | −11% | 17 |
+| R1 50% IEF/GLD inverse vol | 8.0% | 1.02 | 18.6% | −6.3% | 8.8% / 18.6% | 7.3% / 16.2% | −15% | −16% | −12% | 18 |
+| R1 60% equal | 9.1% | 0.96 | 23.8% | −10.8% | 9.8% / 23.8% | 8.5% / 20.4% | −20% | −20% | −11% | 18 |
+| R1 70% equal | 9.4% | 0.90 | 27.9% | −14.3% | 10.0% / 27.9% | 8.9% / 23.6% | −26% | −23% | −12% | 20 |
+| SPY 50% equal | 9.3% | 0.92 | 27.9% | −14.9% | 8.4% / 27.9% | 10.1% / 18.7% | −25% | −17% | −18% | 18 |
+| SPY 60% equal | 9.6% | 0.86 | 32.8% | −19.6% | 8.4% / 32.8% | 10.8% / 20.6% | −32% | −21% | −19% | 23 |
+| current risk parity | 6.9% | 1.07 | 15.5% | −8.1% | 8.4% / 12.8% | 5.6% / 15.5% | +4% | −8% | −13% | 44 |
+
+- Each 10 points of stock adds only ~0.3%/yr but 3–4 points of max drawdown. 70% is above 25%.
+- The equal IEF/GLD split earns ~0.6–0.8%/yr more than inverse vol, because it holds more gold. It is still ahead to 2023-12, before gold's run.
+- The swan sleeve's gain shows up in drawdown: R1 at 50% has the max DD of SPY at ~35%, and earns ~0.4%/yr more. Since 2015, SPY mixes earn ~2%/yr more at the same weight, with more drawdown.
+- The current risk parity needed 44 months to regain its 2020-08 high, because of the 2022 bond selloff. The 50–60% mixes recovered from the GFC in 17–18 months.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
