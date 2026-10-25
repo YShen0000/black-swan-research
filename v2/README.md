@@ -34,6 +34,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/strategy_search.py           # momentum, trend, dual momentum, rotation, combos vs a fixed bar
 .venv/bin/python v2/strategy_robustness.py       # overfitting checks and 4-tranche versions of the two best
 .venv/bin/python v2/core_search.py [build]       # D1's core: Barra / swan-cap min-var / top-N sleeves x stock share
+.venv/bin/python v2/selection_search.py [build]  # sector-neutral swan selection and asymmetric beta vs R1
 ```
 
 | File | What |
@@ -63,6 +64,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `strategy_search.py` | beyond swan beta: stock momentum, trend (GTAA), dual momentum, multi-asset and sector rotation, combos |
 | `strategy_robustness.py` | trend length, lookbacks, number held, decision day, costs, leave-one-asset-out, tranches |
 | `core_search.py` | D1's core retested: Barra min-var, swan-beta cap + min-var, top 20 / 30 vs R1; core stock share 50 / 70 / 100% |
+| `selection_search.py` | selection for return too: sector-neutral swan (N1, with control N0), asymmetric beta (N2) |
 | `live.py` | live use of D1: target holdings (core + 4 rotation tranches), orders from your holdings, signals / market / drift report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -586,6 +588,34 @@ D1 here = half core (stocks / IEF / GLD) + half rotation, in 4 tranches, 2005–
 | 100/0/0 | 80% | 10.4% | 0.92 | 25.0% | −10.4% | 11.5% / 9.5% | −20% | −23% |
 
 Each step adds 0.3–0.5%/yr in both sub-periods and 2–5 points of max drawdown. 70/15/15 keeps the Sharpe almost unchanged. 100/0/0 reaches 10.4% but sits at the 25% limit, and its ex-COVID Sharpe (1.01) is below the current 1.05.
+
+## Selection for return: sector-neutral and asymmetric beta
+
+Since 2015, R1 earned no excess return over SPY + T-bills at its beta (9.9% vs 9.5%). Its lag behind SPY comes from beta and sectors: in 2015–26 it averaged 2% in tech (XLK: 21.7%/yr), 22% in consumer staples and 21% in utilities. `selection_search.py` tests two selections fixed in advance:
+- **N1 sector-neutral swan:** the lowest third by blend inside each sector, with sectors weighted by their share of dollar volume as the cap proxy. That proxy puts tech at ~25% on average in 2015–26 and 44% today, above the index.
+- **N0:** the same sector weights over all candidates, without selection, as the control for N1.
+- **N2 asymmetric beta:** the lowest third by swan mean minus 1-year market beta.
+
+In the table, "excess" is the CAGR over SPY + T-bills at the same beta.
+
+| stocks only, 2005–26 | CAGR | Sharpe | max DD | β | excess 05–14 / 15–26 | 15–26 CAGR | swans with a smaller loss than SPY |
+|---|---|---|---|---|---|---|---|
+| R1 | 10.1% | 0.72 | 41% | 0.68 | +4.0% / +0.4% | 9.9% | 7 of 7 |
+| N1 sector-neutral swan | 10.1% | 0.65 | 48% | 0.85 | +1.9% / −0.5% | 10.9% | 6 of 7 |
+| N0 sector-neutral, no selection | 11.0% | 0.62 | 57% | 1.04 | +1.7% / −1.3% | 12.2% | 4 of 7 |
+| N2 asymmetric beta | 11.8% | 0.64 | 55% | 1.07 | +3.1% / −1.5% | 12.2% | 3 of 7 |
+| SPY | 10.8% | 0.64 | 55% | 1.00 | 0 / 0 | 13.6% | – |
+
+| D1, core 70/15/15, 4 tranches | CAGR | Sharpe | max DD | worst year | Sharpe 05–14 / 15–26 / ex-COVID |
+|---|---|---|---|---|---|
+| **R1 (current)** | **9.9%** | **0.97** | **19.6%** | −5.4% | 1.01 / 0.95 / 1.05 |
+| N1 | 10.0% | 0.94 | 21.8% | −7.9% | 0.93 / 0.95 / 1.00 |
+| N2 | 10.7% | 0.90 | 25.1% | −10.7% | 0.90 / 0.91 / 0.96 |
+
+**None adopted.**
+- **N1:** selecting inside sectors keeps part of the protection (48% max DD vs 57% for N0, smaller losses than SPY in 6 of 7 swans), but it adds only ~0.3%/yr over its control, and in D1 it is behind R1.
+- **N2:** asymmetry does not persist. Stocks that fell less than their beta implied in past swans did not do so again: it ends up a beta-1.07 portfolio that lost more than SPY in 4 of 7 swans.
+- **Since 2015, no swan-based selection earns more than its beta.** The swan signal buys crash protection by holding less market. It does not add return, so a higher return needs a source unrelated to crashes.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
