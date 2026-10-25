@@ -61,7 +61,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `search_sleeves.py` | monthly R1, 12-1 momentum (M1) and swan + momentum (M2) sleeves |
 | `strategy_search.py` | beyond swan beta: stock momentum, trend (GTAA), dual momentum, multi-asset and sector rotation, combos |
 | `strategy_robustness.py` | trend length, lookbacks, number held, decision day, costs, leave-one-asset-out, tranches |
-| `live.py` | live use of the chosen allocation: target holdings, orders from your holdings, risk / market report |
+| `live.py` | live use of D1: target holdings (core + 4 rotation tranches), orders from your holdings, signals / market / drift report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
 
@@ -410,7 +410,7 @@ With D0 as the sleeve the numbers are similar (A4 is the only variant at ≤ 15%
 3. **Where the swan-beta selection matters:** in an equity-heavy mix it cuts the drawdown clearly (A0: 22.7% with R1 vs 31.6% with SPY). In risk parity, where stocks are only ~25–30% of the risk budget, it matters little (15.5% vs 17.5%).
 4. The 15–16% drawdown of the risk-parity mixes comes from 2022, when stocks and bonds fell together. Since 2015 their returns are ~5–6%/yr, because bonds have been weak.
 
-## Chosen allocation: robustness and live use
+## Risk parity (chosen 2026-10-23, replaced by D1 on 2026-10-25): robustness
 
 Chosen on 2026-10-23: **A1 risk parity of the R1 sleeve, IEF and GLD** (inverse 1-year vol, split reset monthly, sleeve rebuilt quarterly). `rp_robustness.py`, 2004 → 2026-10:
 
@@ -431,20 +431,7 @@ Chosen on 2026-10-23: **A1 risk parity of the R1 sleeve, IEF and GLD** (inverse 
 
 The result does not hinge on timing, costs or the lookback: ~7% a year with a 15–17% max drawdown. Gold adds ~1.5%/yr (7.1% vs 5.6%); stopping at 2023-12, before gold's 2024–26 run, the mix still earns 6.6%. Longer bonds (TLT) buy return with drawdown; in 2022 they fell with stocks. A 30-stock sleeve, for small accounts, costs ~1 point of max drawdown.
 
-**Live use** (`v2/live.py`; everything it writes goes to `live/`, which is git-ignored because it holds your positions):
-
-```
-.venv/bin/python data/update_data.py                                     # 1. data up to date (~4 min)
-.venv/bin/python v2/live.py target --capital 20000 [--stocks 30 --whole]   # 2. target holdings
-.venv/bin/python v2/live.py orders --holdings live/holdings.csv            # 3. trades, sells first
-.venv/bin/python v2/live.py report --holdings live/holdings.csv            #    market, split, risk, drift
-```
-
-- Schedule: on the first trading day of each month the sleeve is rebuilt and the split is reset, in one step (`target` reuses the month's saved sleeve of the same size if run again). Nothing in between: event triggers did not help (below). `report` flags a drift above 5% so you can spot a wrong or missed trade.
-- Number of stocks: a fixed rule set before the results, not an optimisation: the lowest third of the eligible S&P500 members by the blend score (½ mean of the last 5 swan betas + ½ 1-year market beta), at most 25% per sector, inverse-vol weights. Today that is 163 of 498; historically 81–163, because fewer delisted members are on Yahoo for early years. `--stocks N` takes the N lowest instead; 30, 50 and 75 give the same return with ~1 point more drawdown.
-- `holdings.csv` has columns `ticker,shares`, plus a `CASH` row in dollars. `orders` refuses to run if your holdings are worth more than 2% away from the capital the target was built for; re-run `target` with the actual value.
-- Small accounts: the default sleeve is ~160 stocks at ~$30–50 each per $20k, which needs fractional shares. Without them use `--stocks 30 --whole`: whole shares are rounded to the nearest share within the cash, leaving ~$50 and ≤ 1% off target per name. Stocks are only ~25–30% of the money; the rest is IEF and GLD.
-- The split moves with volatility: on 2026-10-23 it was stocks 28%, IEF 62%, GLD 11% (gold has been volatile). That is the rule as backtested, not a view.
+Live use moved to D1 on 2026-10-25 (see *Live strategy* below).
 
 **Event triggers** (`event_triggers.py`, fixed in advance; weights drift between resets as in a real account, which costs ~0.2%/yr against the constant-weight numbers above):
 
@@ -545,6 +532,26 @@ Stock momentum does not beat the swan sleeve, and trend filters cut drawdowns bu
 - 2012–18 was weak for rotation: C3 earned 5.6%/yr while SPY earned 12.6%.
 
 **Conclusion.** No variant clears all five bars once timing luck is removed. Robust unlevered results top out around 9.5–10% a year with a 17–20% max drawdown. The 2015–26 bar against SPY is the hardest, because US large caps returned 13.6% a year then. Swan beta alone is not enough: it is a good defensive equity sleeve, and rotation adds a second, trend-based return source. Not yet tested, for lack of data: fundamental factors (quality, value, profitability).
+
+## Live strategy (from 2026-10-25): D1
+
+Half the money is the **core**: R1 swan-beta sleeve 50% / IEF 25% / GLD 25%, with R1 rebuilt and the core reset monthly. The other half is the **rotation** C3, in 4 equal tranches of 12.5% each. Each tranche holds the 3 strongest of SPY, EFA, EEM, VNQ, DBC, IEF, TLT and GLD by mean 3/6/12-month return, each only while above its 10-month average (else cash). The tranches are decided at the month end and 5, 10 and 15 trading days in. Backtest (4 tranches, 2005–26): 9.6%/yr, max DD 17.5%, worst year −5.9%, Sharpe 0.99.
+
+`v2/live.py` writes everything to `live/`, which is git-ignored because it holds your positions:
+
+```
+.venv/bin/python data/update_data.py                                     # 1. data up to date (~4 min)
+.venv/bin/python v2/live.py target --capital 20000 [--stocks 30 --whole]   # 2. target: core + all 4 tranches as of now
+.venv/bin/python v2/live.py orders --holdings live/holdings.csv            # 3. trades, sells first
+.venv/bin/python v2/live.py report --holdings live/holdings.csv            #    signals, tranches, market, drift, next dates
+.venv/bin/python v2/live.py check                                          #    self-check of the decision days
+```
+
+- **When:** run 1–3 after the close on the last trading day of the month and on the 6th, 11th and 16th trading day. Trade the next day. On each of those days one tranche changes, plus small drift trades. `report` prints the next dates.
+- **No state to keep:** every tranche is recomputed from the data as of its own latest decision day, so running `target` again on another day gives the same answer. Rotation signals were checked against the backtest: the weights are identical.
+- **Cash:** the rotation's cash slot (an asset below its average) goes in the `CASH` row. Keep it in the broker's money-market sweep or a T-bill ETF (SGOV / BIL, entered as CASH).
+- **`holdings.csv`:** columns `ticker,shares` plus a `CASH` row in dollars. `orders` refuses to run if your holdings are worth more than 2% away from the target's capital. Adjustments under `--min-trade` ($50) are skipped, but opening or closing a position never is.
+- **Small accounts:** stocks are 25% of the money, so $20k gives ~$31 per stock in the default 163-stock sleeve. That needs fractional shares; without them use `--stocks 30 --whole` (~$170 per stock, ≤ 1.4% off target per name, ~$800 cash).
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).

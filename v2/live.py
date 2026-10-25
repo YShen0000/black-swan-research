@@ -1,16 +1,23 @@
-"""Live use of the chosen allocation: risk parity of the swan-beta stock sleeve, 7-10y Treasuries (IEF) and gold (GLD).
+"""Live use of the chosen strategy, D1 (strategy_search.py / strategy_robustness.py):
+
+  half the money: core   R1 swan-beta stock sleeve 50%, IEF 25%, GLD 25%   (R1 rebuilt monthly, core reset monthly)
+  half the money: rotation, in 4 equal tranches. Each tranche holds the 3 strongest of SPY, EFA, EEM, VNQ, DBC, IEF,
+                  TLT, GLD by mean 3/6/12-month return, an asset only while above its 10-month average (else cash).
+                  Tranche 0 is decided at each month end, tranches 5 / 10 / 15 that many trading days into the month.
 
     python data/update_data.py                                          # 1. bring the data up to date
-    python v2/live.py target --capital 20000 [--stocks 30] [--whole]    # 2. target holdings for the next trading day
+    python v2/live.py target --capital 20000 [--stocks 30] [--whole]    # 2. target holdings (all tranches as of now)
     python v2/live.py orders --holdings live/holdings.csv               # 3. trades from your holdings to the target
-    python v2/live.py report [--holdings live/holdings.csv]             #    risk and market check, any time
+    python v2/live.py report [--holdings live/holdings.csv]             #    signals, market and drift, any time
+    python v2/live.py check                                             #    self-check of the decision-day logic
 
-Schedule: once a month, on the first trading day, the stock sleeve is rebuilt and the split between stocks, IEF and
-GLD is reset (event_triggers.py: monthly, quarterly and event-triggered rebuilds perform the same). `target` reuses
-this month's sleeve if it already exists. Everything is saved in live/ (git-ignored: it holds your positions; the repo is public).
+When to run 1-3 (after the close, trade the next day): the last trading day of each month, and the 6th, 11th and 16th
+trading day of each month (5 / 10 / 15 days in). Only one tranche changes on each of those days, plus small drift
+trades. `report` prints the next dates. Everything is saved in live/ (git-ignored: it holds your positions).
 
-holdings.csv: two columns, ticker,shares (fractional allowed). Use CASH for uninvested cash, in dollars.
-Backtest reference (2004-2026, see v2/README.md): ~7%/yr, max drawdown ~16%, worst calendar year about -8%.
+holdings.csv: two columns, ticker,shares (fractional allowed). Use CASH for cash in dollars: the rotation's cash slot
+is meant to sit in the broker's money-market sweep (or a T-bill ETF such as SGOV / BIL, entered as CASH).
+Backtest reference (2005-2026, 4 tranches): 9.6%/yr, max drawdown 17.5%, worst calendar year -5.9%, Sharpe 0.99.
 """
 import argparse
 import datetime
@@ -19,13 +26,19 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import allocation as A
 import components as C
+import defense as DF
 import risk_model as RM
+import strategy_search as SS
 import swan_beta
 
 LIVE = Path(__file__).resolve().parent.parent / "live"
 U = "SP500"
-ETFS = ["IEF", "GLD"]
+ROT = ["SPY", "EFA", "EEM", "VNQ", "DBC", "IEF", "TLT", "GLD"]
+CORE = {"IEF": 0.25, "GLD": 0.25}   # + stocks 0.5
+OFFSETS = (0, 5, 10, 15)            # 0 = month end
+ROTATION_SHARE = 0.5
 
 
 def data_end():
@@ -56,20 +69,53 @@ def sleeve(t, stocks=None, new=False):
     return w
 
 
-def split(s):
-    """Risk parity across the sleeve, IEF and GLD: inverse of each one's past-year daily volatility."""
-    close, etf = swan_beta.load_prices(U), etf_prices()
-    r = close[s.index].iloc[-253:].pct_change().iloc[1:].fillna(0) @ s
-    rets = pd.DataFrame({"stocks": r, **{e: etf[e].pct_change().reindex(r.index) for e in ETFS}})
-    inv = 1 / rets.std()
-    return inv / inv.sum(), rets
+def rotation_returns():
+    etf = etf_prices()
+    r = etf[[a for a in ROT if a != "SPY"]].pct_change(fill_method=None)
+    r["SPY"] = swan_beta.load_prices(U)["SPY"].reindex(etf.index).pct_change(fill_method=None)
+    r["cash"] = DF.tbill_daily(etf.index)
+    return r.iloc[1:]
+
+
+def tranche_days(index):
+    """Each tranche's latest decision day in `index` (trading days up to the last data day)."""
+    last = index[-1]
+    n = index.to_series().groupby(index.to_period("M")).cumcount().values
+    ends = [d for d in A.month_ends(index) if d < last or d == pd.offsets.BMonthEnd().rollforward(last)]
+    return {o: (max(ends) if o == 0 else index[n == o].max()) for o in OFFSETS}
+
+
+def next_days(last):
+    """Approximate next decision days (business days, US holidays not counted)."""
+    out = {}
+    for o in OFFSETS:
+        for m in [last.to_period("M"), last.to_period("M") + 1]:
+            days = pd.bdate_range(m.start_time, m.end_time)
+            d = days[-1] if o == 0 else days[o]
+            if d > last:
+                out[o] = d
+                break
+    return out
+
+
+def tranches(r):
+    f = SS.rotation(ROT)
+    return {o: (d, f(d, r.loc[:d])) for o, d in tranche_days(r.index).items()}
+
+
+def weights(t, stocks=None, new_sleeve=False):
+    s = sleeve(t, stocks, new_sleeve)
+    core = pd.concat([s * 0.5, pd.Series(CORE)]) * (1 - ROTATION_SHARE)
+    tr = tranches(rotation_returns())
+    rot = sum(w for _, w in tr.values()) / len(tr) * ROTATION_SHARE
+    w = core.add(rot, fill_value=0)
+    return w[w > 0], s, tr
 
 
 def target(capital, stocks=None, whole=False, new_sleeve=False):
     t = data_end() + datetime.timedelta(days=1)
-    s = sleeve(t, stocks, new_sleeve)
-    mix, _ = split(s)
-    w = pd.concat([s * mix["stocks"], mix[ETFS]])
+    w, s, tr = weights(t, stocks, new_sleeve)
+    w = w.drop("cash", errors="ignore")
     px = last_prices(w.index)
     shares = capital * w / px
     shares = np.floor(shares) if whole else shares.round(4)
@@ -80,13 +126,23 @@ def target(capital, stocks=None, whole=False, new_sleeve=False):
             break
         shares[gap.idxmax()] += 1
     out = pd.DataFrame({"weight": w, "price": px, "shares": shares, "value": shares * px})
-    out.loc["CASH"] = [np.nan, 1.0, capital - out.value.sum(), capital - out.value.sum()]
+    out.loc["CASH"] = [1 - w.sum(), 1.0, capital - out.value.sum(), capital - out.value.sum()]
     path = LIVE / f"target_{t:%Y-%m-%d}.csv"
     out.to_csv(path, float_format="%.6g")
     print(f"prices as of {data_end().date()} | sleeve {month(t)} ({len(s)} stocks) | saved {path}")
-    print(f"split: stocks {mix['stocks']:.1%}, IEF {mix['IEF']:.1%}, GLD {mix['GLD']:.1%}")
-    print(out.sort_values("value", ascending=False).head(12).round(4).to_string())
+    print_tranches(tr)
+    etfs = out.drop(s.index, errors="ignore")
+    print(f"\nstocks {out.weight.reindex(s.index).sum():.1%} of the money; ETFs and cash:")
+    print(etfs.sort_values("value", ascending=False).round(4).to_string())
     return out
+
+
+def print_tranches(tr):
+    print("rotation tranches (each 12.5% of the money):")
+    for o, (d, w) in tr.items():
+        name = "month end" if o == 0 else f"day {o}"
+        picks = ", ".join(f"{a} {v:.0%}" for a, v in w[w > 0].sort_values(ascending=False).items())
+        print(f"  {name:9s} decided {d.date()}: {picks}")
 
 
 def latest_target():
@@ -105,13 +161,15 @@ def orders(holdings_file, min_trade=50.0):
     if abs(worth / tgt.value.sum() - 1) > 0.02:
         raise SystemExit(f"holdings are worth ${worth:,.0f} but {path.name} was built for ${tgt.value.sum():,.0f}:"
                          f" re-run `target --capital {worth:.0f}` (same --stocks / --whole) first")
-    delta =tgt.shares.reindex(tickers).fillna(0) - have.reindex(tickers).fillna(0)
+    delta = tgt.shares.reindex(tickers).fillna(0) - have.reindex(tickers).fillna(0)
     o = pd.DataFrame({"shares": delta, "price": px, "value": delta * px})
-    o = o[o.value.abs() >= min_trade].sort_values("value")   # sells first, they fund the buys
+    opening_or_closing = (tgt.shares.reindex(tickers).fillna(0) == 0) | (have.reindex(tickers).fillna(0) == 0)
+    o = o[(o.value.abs() >= min_trade) | (opening_or_closing & (o.shares != 0))]   # min size only for adjustments
+    o = o.sort_values("value")   # sells first, they fund the buys
     o["side"] = np.where(o.shares > 0, "BUY", "SELL")
     out = LIVE / f"orders_{path.stem.removeprefix('target_')}.csv"
     o.to_csv(out, float_format="%.6g")
-    print(f"vs {path.name}: {len(o)} trades over ${min_trade:.0f}, sells ${-o.value[o.value < 0].sum():,.0f},"
+    print(f"vs {path.name}: {len(o)} trades (adjustments under ${min_trade:.0f} skipped), sells ${-o.value[o.value < 0].sum():,.0f},"
           f" buys ${o.value[o.value > 0].sum():,.0f} | saved {out}")
     print(o.round(4).to_string())
 
@@ -121,53 +179,64 @@ def report(holdings_file=None):
     close = swan_beta.load_prices(U)
     print(f"data through {data_end().date()}")
 
-    # market state and new swans
     oex = close["^OEX"].dropna()
     dd = swan_beta.drawdown(oex).iloc[-1]
-    print(f"\nmarket: ^OEX is {dd:.1%} below its 1-year high"
-          + ("  <-- swan territory (>= 15%)" if dd >= 0.15 else ""))
+    print(f"\nmarket: ^OEX is {dd:.1%} below its 1-year high" + ("  <-- swan territory (>= 15%)" if dd >= 0.15 else ""))
     rule = swan_beta.detect_swans(close)
     newer = rule[rule.trough > swan_beta.SWANS.trough.max() + datetime.timedelta(days=45)]
     if len(newer):
         print("new swan(s) found by the 15% rule, not yet in data/swans.csv (add once the trough is confirmed):")
         print(newer.to_string())
 
-    # the portfolio of the latest target (or this month's default sleeve if there is none yet)
-    files = sorted(LIVE.glob("target_*.csv"))
-    s = pd.read_csv(files[-1], index_col=0).weight.drop([*ETFS, "CASH"]) if files else sleeve(t)
-    s = s / s.sum()
-    mix, rets = split(s)
-    cov = rets.cov() * 252
-    w = mix.values
-    rc = w * (cov.values @ w) / (w @ cov.values @ w)
-    print(f"\nsplit (target): " + ", ".join(f"{k} {v:.1%}" for k, v in mix.items())
-          + f" | expected vol {np.sqrt(w @ cov.values @ w):.1%}")
-    print("risk share: " + ", ".join(f"{k} {v:.0%}" for k, v in zip(mix.index, rc)))
+    r = rotation_returns()
+    R = SS.Rules(r, r.index[-1])
+    sig = pd.DataFrame({"score (3/6/12m)": {a: R.score(a) for a in ROT}, "above 10m avg": {a: R.up(a) for a in ROT}})
+    print("\nrotation signals today (top 3 by score, held only if above the average):")
+    print(sig.sort_values("score (3/6/12m)", ascending=False).to_string(float_format=lambda x: f"{x:+.1%}"))
+    w, s, tr = weights(t)
+    print_tranches(tr)
+
     sec = s.groupby(C.sectors()(s.index)).sum().sort_values(ascending=False)
-    print(f"sleeve: {len(s)} stocks, top sectors " + ", ".join(f"{k} {v:.0%}" for k, v in sec.head(3).items()))
+    print(f"\nsleeve: {len(s)} stocks, top sectors " + ", ".join(f"{k} {v:.0%}" for k, v in sec.head(3).items()))
     x = RM.exposures(t, s.index, U)
     print("sleeve factor exposures (weighted): " + ", ".join(
         f"{f} {(x[f] * s).sum():+.2f}" for f in ["market", "size", "momentum", "volatility"]))
+    groups = lambda v: pd.Series({"stocks": v.drop(ROT + ["cash", "CASH"], errors="ignore").sum(),
+                                  **{a: v.get(a, 0.0) for a in ROT}, "cash": v.get("cash", 0.0) + v.get("CASH", 0.0)})
+    tg = groups(w)
+    print("target by holding: " + ", ".join(f"{k} {v:.1%}" for k, v in tg.items() if v > 0))
 
     if holdings_file:
         have = pd.read_csv(holdings_file, index_col=0).iloc[:, 0]
         px = last_prices(have.index.drop("CASH", errors="ignore"))
-        value = (have.drop("CASH", errors="ignore") * px)
-        total = value.sum() + have.get("CASH", 0.0)
-        groups = {"stocks": value.drop(ETFS, errors="ignore").sum(), **{e: value.get(e, 0.0) for e in ETFS},
-                  "CASH": have.get("CASH", 0.0)}
-        print(f"\nyour holdings: ${total:,.0f} | " + ", ".join(f"{k} {v / total:.1%}" for k, v in groups.items()))
-        drift = max(abs(groups[k] / total - mix.get(k, 0)) for k in ["stocks", *ETFS])
-        print(f"largest drift from target split: {drift:.1%}" + ("  <-- rebalance" if drift > 0.05 else ""))
+        value = pd.concat([have.drop("CASH", errors="ignore") * px, pd.Series({"CASH": have.get("CASH", 0.0)})])
+        hg = groups(value / value.sum())
+        print(f"your holdings (${value.sum():,.0f}): " + ", ".join(f"{k} {v:.1%}" for k, v in hg.items() if v > 0))
+        drift = (hg - tg).abs()
+        print(f"largest drift from target: {drift.idxmax()} {drift.max():.1%}"
+              + ("  <-- check for a missed or wrong trade" if drift.max() > 0.05 else ""))
 
-    nxt = pd.Timestamp(t.year, t.month, 1) + pd.offsets.MonthBegin(1)
-    print(f"\nnext rebalance (sleeve + split): first trading day of {nxt:%Y-%m}")
-    print("backtest reference: ~7%/yr, max drawdown ~16%, worst year about -8%")
+    print("\nnext decision days (run after the close, trade the next day): " + ", ".join(
+        f"{'month end' if o == 0 else f'day {o}'} {d.date()}" for o, d in sorted(next_days(data_end()).items(), key=lambda x: x[1])))
+    print("backtest reference: 9.6%/yr, max drawdown 17.5%, worst year -5.9%")
+
+
+def check():
+    """The decision days found on historical data cut-offs match the backtest's rules."""
+    idx = rotation_returns().index
+    cut = lambda d: idx[idx <= d]
+    feb = tranche_days(cut("2020-02-28"))   # a month end: tranche 0 decides that day
+    assert feb[0] == pd.Timestamp("2020-02-28"), feb
+    assert feb[5] == idx[(idx.to_period("M") == "2020-02")][5], feb
+    mar = tranche_days(cut("2020-03-10"))   # 7th trading day of March: day-5 tranche decided on the 6th
+    assert mar[0] == pd.Timestamp("2020-02-28") and mar[5] == idx[(idx.to_period("M") == "2020-03")][5], mar
+    assert mar[10] == idx[(idx.to_period("M") == "2020-02")][10], mar
+    print("decision days ok:", {o: d.date() for o, d in mar.items()})
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=["target", "orders", "report"])
+    ap.add_argument("command", choices=["target", "orders", "report", "check"])
     ap.add_argument("--capital", type=float)
     ap.add_argument("--stocks", type=int, help="number of stocks in the sleeve (default: lowest third, ~160)")
     ap.add_argument("--whole", action="store_true", help="whole shares only (leftover stays as cash)")
@@ -181,5 +250,7 @@ if __name__ == "__main__":
         target(a.capital, a.stocks, a.whole, a.new_sleeve)
     elif a.command == "orders":
         orders(a.holdings or LIVE / "holdings.csv", a.min_trade)
+    elif a.command == "check":
+        check()
     else:
         report(a.holdings)
