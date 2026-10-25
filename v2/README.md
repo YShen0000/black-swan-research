@@ -35,6 +35,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/strategy_robustness.py       # overfitting checks and 4-tranche versions of the two best
 .venv/bin/python v2/core_search.py [build]       # D1's core: Barra / swan-cap min-var / top-N sleeves x stock share
 .venv/bin/python v2/selection_search.py [build]  # sector-neutral swan selection and asymmetric beta vs R1
+.venv/bin/python v2/factor_lab.py [build]        # swan beta and 10 price factors: rank IC and quintiles, 2005-15 vs 2016-26
+.venv/bin/python v2/mean_reversion.py            # RSI(2) short-term mean reversion on SPY and sector ETFs
+.venv/bin/python v2/return_search.py [build]     # aggressive rotation, trend-timed QQQ / SPY, timed swan factor
 ```
 
 | File | What |
@@ -65,6 +68,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `strategy_robustness.py` | trend length, lookbacks, number held, decision day, costs, leave-one-asset-out, tranches |
 | `core_search.py` | D1's core retested: Barra min-var, swan-beta cap + min-var, top 20 / 30 vs R1; core stock share 50 / 70 / 100% |
 | `selection_search.py` | selection for return too: sector-neutral swan (N1, with control N0), asymmetric beta (N2) |
+| `factor_lab.py` | swan beta as a factor next to market beta, volatility, momentum, reversal, 52-week high, trend, size |
+| `mean_reversion.py` | RSI(2) mean reversion on daily closes (the daily stand-in for intraday trading) |
+| `return_search.py` | aggressive rotation (top 1 / 2 / 3 of 10 incl. QQQ, IWM; sectors), trend-timed QQQ / SPY, timed swan factor |
 | `live.py` | live use of D1: target holdings (core + 4 rotation tranches), orders from your holdings, signals / market / drift report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -616,6 +622,53 @@ In the table, "excess" is the CAGR over SPY + T-bills at the same beta.
 - **N1:** selecting inside sectors keeps part of the protection (48% max DD vs 57% for N0, smaller losses than SPY in 6 of 7 swans), but it adds only ~0.3%/yr over its control, and in D1 it is behind R1.
 - **N2:** asymmetry does not persist. Stocks that fell less than their beta implied in past swans did not do so again: it ends up a beta-1.07 portfolio that lost more than SPY in 4 of 7 swans.
 - **Since 2015, no swan-based selection earns more than its beta.** The swan signal buys crash protection by holding less market. It does not add return, so a higher return needs a source unrelated to crashes.
+
+## Toward 20% a year: swan beta as a factor, and what else was tried
+
+**Swan beta as a factor** (`factor_lab.py`, S&P500 point-in-time, monthly). Each factor's rank IC with the next month's return and its equal-weight quintile spread (top minus bottom, annualised):
+
+| factor | IC 2005–15 (t) | IC 2016–26 (t) | Q5−Q1 2005–15 | Q5−Q1 2016–26 |
+|---|---|---|---|---|
+| swan beta (last 5 swans) | −0.020 (−1.0) | +0.013 (+0.5) | −8.2% | +5.9% |
+| blend | −0.014 (−0.6) | +0.019 (+0.7) | −4.5% | +7.8% |
+| market beta | −0.004 | +0.025 (+1.0) | −3.3% | +9.5% |
+| 12-1 momentum | +0.014 (+0.7) | −0.007 | +0.3% | +2.1% |
+| 1-month reversal, 52-week high, trend | all \|t\| < 1.6 | all \|t\| < 0.8 | −3% to −1% | −3% to +3% |
+| size (dollar volume) | −0.012 (−1.4) | +0.009 (+0.9) | −4.3% | +5.4% |
+
+- No factor has a stable premium. Swan beta works like market beta: low crash beta won in 2005–15, which included 2008, and high crash beta won in 2016–26.
+- Timing it does not rescue it. On the 2005–15 training data, low crash-beta stocks earned more even in up-trends, and the months after a down-trend were mostly rebounds. T3 below (high-crash-beta stocks in up-trends, the defensive core otherwise) returned 7.8% with a 43% max DD.
+- The swan signal stays what it was: a ranking of who falls less in a crash.
+
+**Intraday-style trading** (`mean_reversion.py`). RSI(2) on SPY, buying above the 200-day average when RSI < 10 and selling above the 5-day average, filled at the next close, earned 3.5%/yr. It was invested 11% of the time and gained +0.46% per trade, with Sharpe 0.58. On the 9 sector ETFs it earned 2.8%. That is too small to matter, and true intraday trading needs intraday data that is not available here.
+
+**More return from what you own** (`return_search.py`, all with 4 tranches, 2005–26):
+
+| | CAGR | Sharpe | max DD | 2005–15 / 2016–26 | GFC | COVID | 2022 |
+|---|---|---|---|---|---|---|---|
+| SPY | 10.8% | 0.64 | 55% | 7.0% / 14.9% | −55% | −34% | −25% |
+| QQQ (hindsight: the best index) | 14.9% | 0.75 | 53% | 10.7% / 19.4% | −52% | −28% | −34% |
+| **D1 70/15/15 (live)** | **9.9%** | **0.97** | **19.6%** | 9.7% / 10.2% | −10% | −18% | −9% |
+| C3 rotation | 10.3% | 0.81 | 20.2% | 9.8% / 10.8% | +7% | −12% | −7% |
+| A1 rotation top 3 of 10 (adds QQQ, IWM) | 10.7% | 0.78 | 22.5% | 11.0% / 10.3% | +4% | −18% | −9% |
+| A2 top 2 / A4 top 1 of 10 | 10.7% / 10.7% | 0.71 / 0.60 | 27% / 30% | | | | |
+| A3 sectors + QQQ + bonds/gold, top 3 | 9.8% | 0.69 | 26% | 8.3% / 11.4% | | | |
+| T1 QQQ above its 10-month average, else IEF/GLD | 12.0% | 0.77 | 37.6% | 6.7% / 17.6% | −24% | −26% | −21% |
+| T2 the same with SPY | 9.5% | 0.76 | 27.7% | 8.1% / 11.1% | | | |
+| T3 swan factor timed | 7.8% | 0.50 | 43% | | | | |
+| M1 half D1 core + half A1 | 10.2% | 0.95 | 20.7% | | | | |
+| M2 half D1 core + half T1 | 10.9% | 0.93 | 29.8% | 8.2% / 13.7% | | | |
+
+Concentrating the rotation (top 1–2) adds drawdown, not return. The only higher numbers come from owning Nasdaq-100, which was chosen with hindsight: T1's edge over T2 is all 2016–26, and in 2005–15 it earned less than SPY.
+
+**What 20% would take.** Leverage, which the strategy excludes, at T-bill + 0.5% financing:
+
+| | 1× | 1.5× | 2× |
+|---|---|---|---|
+| D1 70/15/15: CAGR / max DD | 9.9% / 19.6% | 13.5% / 28.4% | 16.9% / 36.3% |
+| C3 rotation | 10.3% / 20.2% | 13.8% / 29.1% | 16.9% / 37.1% |
+
+20% needs about 2.5× and a ~45% drawdown. **Without leverage, the robust ceiling with a max drawdown of 20–25% is about 10–11% a year.** D1 70/15/15 remains the live strategy, because it has the best return per unit of drawdown found here.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
