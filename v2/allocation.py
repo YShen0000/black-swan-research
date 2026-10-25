@@ -31,21 +31,25 @@ def month_ends(index):
     return index.to_series().groupby(index.to_period("M")).tail(1).index
 
 
-def run(assets, target_fn, control=None, cost=0.001, every=1):
+def run(assets, target_fn, control=None, cost=0.001, every=1, dates=(), drift=False, band=None):
     """assets: daily returns (incl. 'shy'); target_fn(date, history) -> weights of the risky mix at a month end.
     control: None, 'vol' or 'dd'. Weights decided at month end are held (daily rebalanced) for the next month.
-    every: rebalance every `every` month ends (1 = monthly, 3 = quarterly)."""
-    ends = set(month_ends(assets.index)[::every])
+    every: rebalance every `every` month ends (1 = monthly, 3 = quarterly). dates: extra rebalance dates.
+    drift: let weights drift with returns between rebalances. band: also rebalance once any weight is this far off."""
+    ends = set(month_ends(assets.index)[::every]) | set(dates)
     risky = [c for c in assets.columns if c != "shy"]
     w = pd.Series(0.0, index=assets.columns)
     w["shy"] = 1.0
-    nav, peak, out, mix_hist = 1.0, 1.0, [], []
+    nav, peak, out, last = 1.0, 1.0, [], None
     for i, (d, row) in enumerate(assets.iterrows()):
         ret = float((w * row.fillna(0)).sum())
         out.append(ret)
         nav *= 1 + ret
         peak = max(peak, nav)
-        if d in ends and i >= 126:
+        if drift:
+            w = w * (1 + row.fillna(0)) / (1 + ret)
+        off = band is not None and last is not None and (w - last).abs().max() > band
+        if (d in ends or off) and i >= 126:
             target = target_fn(d, assets.iloc[: i + 1][risky]).reindex(risky).fillna(0)
             mix_ret = assets.iloc[max(0, i - 62): i + 1][risky].fillna(0) @ target
             share = 1.0
@@ -57,7 +61,7 @@ def run(assets, target_fn, control=None, cost=0.001, every=1):
             new = (target * share).reindex(assets.columns).fillna(0)
             new["shy"] += 1 - share
             out[-1] -= (new - w).abs().sum() * cost
-            w = new
+            w, last = new, new.copy()
     return pd.Series(out, index=assets.index)
 
 

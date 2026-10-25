@@ -27,6 +27,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/equity_defense.py            # drawdown control inside a fully invested stock book
 .venv/bin/python v2/allocation.py                # long-term stock + ETF allocations against a 15% max drawdown target
 .venv/bin/python v2/rp_robustness.py             # the chosen risk parity under other start months, costs, lookbacks, assets, sleeves
+.venv/bin/python v2/event_triggers.py            # event-triggered vs calendar rebuilds and resets
 ```
 
 | File | What |
@@ -49,6 +50,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `equity_defense.py` | crash-day covariance min-var, sector risk parity, stress-beta cap, regime switch; all fully invested |
 | `allocation.py` | stock sleeve + Treasury / gold / TIPS / commodity ETFs: fixed mix, risk parity, vol target, drawdown control |
 | `rp_robustness.py` | robustness of the chosen allocation (A1 risk parity R1 + IEF + GLD) |
+| `event_triggers.py` | sleeve rebuilt monthly / on new swans, split reset on drift or drawdown, vs the calendar |
 | `live.py` | live use of the chosen allocation: target holdings, orders from your holdings, risk / market report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -428,10 +430,24 @@ The result does not hinge on timing, costs or the lookback: ~7% a year with a 15
 .venv/bin/python v2/live.py report --holdings live/holdings.csv            #    market, split, risk, drift
 ```
 
-- Schedule: the split is reset on the first trading day of each month; the sleeve is rebuilt in January, April, July and October (`target` reuses the quarter's saved sleeve of the same size otherwise). Between dates, rebalance only if `report` flags a drift above 5%.
+- Schedule: on the first trading day of each month the sleeve is rebuilt and the split is reset, in one step (`target` reuses the month's saved sleeve of the same size if run again). Nothing in between: event triggers did not help (below). `report` flags a drift above 5% so you can spot a wrong or missed trade.
+- Number of stocks: a fixed rule set before the results, not an optimisation: the lowest third of the eligible S&P500 members by the blend score (½ mean of the last 5 swan betas + ½ 1-year market beta), at most 25% per sector, inverse-vol weights. Today that is 163 of 498; historically 81–163, because fewer delisted members are on Yahoo for early years. `--stocks N` takes the N lowest instead; 30, 50 and 75 give the same return with ~1 point more drawdown.
 - `holdings.csv` has columns `ticker,shares`, plus a `CASH` row in dollars. `orders` refuses to run if your holdings are worth more than 2% away from the capital the target was built for; re-run `target` with the actual value.
 - Small accounts: the default sleeve is ~160 stocks at ~$30–50 each per $20k, which needs fractional shares. Without them use `--stocks 30 --whole`: whole shares are rounded to the nearest share within the cash, leaving ~$50 and ≤ 1% off target per name. Stocks are only ~25–30% of the money; the rest is IEF and GLD.
 - The split moves with volatility: on 2026-10-23 it was stocks 28%, IEF 62%, GLD 11% (gold has been volatile). That is the rule as backtested, not a view.
+
+**Event triggers** (`event_triggers.py`, fixed in advance; weights drift between resets as in a real account, which costs ~0.2%/yr against the constant-weight numbers above):
+
+| | CAGR | Sharpe | max DD | Sharpe 2004–14 / 2015–26 | Sharpe ex-COVID | sleeve turnover/yr | COVID |
+|---|---|---|---|---|---|---|---|
+| base: sleeve quarterly, split monthly | 6.9% | 1.073 | 15.6% | 1.381 / 0.824 | 1.103 | 0.88 | −7.7% |
+| S1 sleeve monthly | 6.9% | 1.067 | 15.5% | 1.366 / 0.826 | 1.095 | 1.37 | −7.5% |
+| S2 base + sleeve rebuilt the day after a new swan is confirmed | 6.9% | 1.074 | 15.6% | 1.384 / 0.823 | 1.102 | 0.90 | −7.7% |
+| S3 S1 + swan trigger | 6.9% | 1.067 | 15.5% | 1.365 / 0.827 | 1.094 | 1.38 | −7.5% |
+| P1 base + split reset when a weight is 5 points off | 6.9% | 1.068 | 15.6% | 1.380 / 0.816 | 1.102 | 0.88 | −7.7% |
+| P2 base + split reset when ^OEX first closes 10% / 15% / 20% below its high | 7.0% | 1.080 | 15.6% | 1.381 / 0.835 | 1.102 | 0.88 | −6.7% |
+
+All within noise. The sleeve hardly changes between rebuilds (97% of the stocks stay from one month to the next, 94% between quarters), because both halves of the score move slowly: the swan half only when a new swan is confirmed (7 times since 2004), the market-beta half by one month of a 1-year window. P2's small gain comes from COVID and fails the adoption rule (no better in 2004–14 or without COVID). Monthly rebuilding is adopted for live use because it is one step instead of two, not because it is better.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).

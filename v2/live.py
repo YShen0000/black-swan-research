@@ -5,9 +5,9 @@
     python v2/live.py orders --holdings live/holdings.csv               # 3. trades from your holdings to the target
     python v2/live.py report [--holdings live/holdings.csv]             #    risk and market check, any time
 
-Schedule, as backtested: the stock sleeve is rebuilt each quarter (first trading day of January, April, July,
-October); the split between stocks, IEF and GLD is reset every month. `target` reuses this quarter's sleeve if it
-already exists. Everything is saved in live/ (git-ignored: it holds your positions; the repo is public).
+Schedule: once a month, on the first trading day, the stock sleeve is rebuilt and the split between stocks, IEF and
+GLD is reset (event_triggers.py: monthly, quarterly and event-triggered rebuilds perform the same). `target` reuses
+this month's sleeve if it already exists. Everything is saved in live/ (git-ignored: it holds your positions; the repo is public).
 
 holdings.csv: two columns, ticker,shares (fractional allowed). Use CASH for uninvested cash, in dollars.
 Backtest reference (2004-2026, see v2/README.md): ~7%/yr, max drawdown ~16%, worst calendar year about -8%.
@@ -41,14 +41,14 @@ def last_prices(tickers):
     return pd.Series({t: (etf[t] if t in etf else close[t]).dropna().iloc[-1] for t in tickers})
 
 
-def quarter(t):
-    return f"{t.year}Q{(t.month - 1) // 3 + 1}"
+def month(t):
+    return f"{t:%Y-%m}"
 
 
 def sleeve(t, stocks=None, new=False):
-    """This quarter's stock sleeve (weights summing to 1), built once per quarter and saved."""
+    """This month's stock sleeve (weights summing to 1), built once per month and saved."""
     LIVE.mkdir(exist_ok=True)
-    path = LIVE / f"sleeve_{quarter(t)}_{stocks or 'third'}.csv"
+    path = LIVE / f"sleeve_{month(t)}_{stocks or 'third'}.csv"
     if path.exists() and not new:
         return pd.read_csv(path, index_col=0).weight
     w = C.recommended(t, U, n=stocks, track="return")
@@ -83,7 +83,7 @@ def target(capital, stocks=None, whole=False, new_sleeve=False):
     out.loc["CASH"] = [np.nan, 1.0, capital - out.value.sum(), capital - out.value.sum()]
     path = LIVE / f"target_{t:%Y-%m-%d}.csv"
     out.to_csv(path, float_format="%.6g")
-    print(f"prices as of {data_end().date()} | sleeve {quarter(t)} ({len(s)} stocks) | saved {path}")
+    print(f"prices as of {data_end().date()} | sleeve {month(t)} ({len(s)} stocks) | saved {path}")
     print(f"split: stocks {mix['stocks']:.1%}, IEF {mix['IEF']:.1%}, GLD {mix['GLD']:.1%}")
     print(out.sort_values("value", ascending=False).head(12).round(4).to_string())
     return out
@@ -132,7 +132,7 @@ def report(holdings_file=None):
         print("new swan(s) found by the 15% rule, not yet in data/swans.csv (add once the trough is confirmed):")
         print(newer.to_string())
 
-    # the portfolio of the latest target (or this quarter's default sleeve if there is none yet)
+    # the portfolio of the latest target (or this month's default sleeve if there is none yet)
     files = sorted(LIVE.glob("target_*.csv"))
     s = pd.read_csv(files[-1], index_col=0).weight.drop([*ETFS, "CASH"]) if files else sleeve(t)
     s = s / s.sum()
@@ -161,8 +161,7 @@ def report(holdings_file=None):
         print(f"largest drift from target split: {drift:.1%}" + ("  <-- rebalance" if drift > 0.05 else ""))
 
     nxt = pd.Timestamp(t.year, t.month, 1) + pd.offsets.MonthBegin(1)
-    print(f"\nnext monthly rebalance: first trading day of {nxt:%Y-%m}"
-          + (" (also rebuilds the stock sleeve)" if nxt.month in (1, 4, 7, 10) else ""))
+    print(f"\nnext rebalance (sleeve + split): first trading day of {nxt:%Y-%m}")
     print("backtest reference: ~7%/yr, max drawdown ~16%, worst year about -8%")
 
 
@@ -172,7 +171,7 @@ if __name__ == "__main__":
     ap.add_argument("--capital", type=float)
     ap.add_argument("--stocks", type=int, help="number of stocks in the sleeve (default: lowest third, ~160)")
     ap.add_argument("--whole", action="store_true", help="whole shares only (leftover stays as cash)")
-    ap.add_argument("--new-sleeve", action="store_true", help="rebuild this quarter's sleeve")
+    ap.add_argument("--new-sleeve", action="store_true", help="rebuild this month's sleeve")
     ap.add_argument("--holdings")
     ap.add_argument("--min-trade", type=float, default=50.0)
     a = ap.parse_args()
