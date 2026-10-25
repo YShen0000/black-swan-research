@@ -40,6 +40,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/return_search.py [build]     # aggressive rotation, trend-timed QQQ / SPY, timed swan factor
 .venv/bin/python v2/swan_window.py [build]       # which past swans to use: last 3 / 5 / all / severe / recency / median
 .venv/bin/python v2/stop_loss.py                 # trailing stops per stock and a drawdown brake on D1
+.venv/bin/python v2/trend_selection.py [build]   # select only up-trend stocks; stops without buying back
 ```
 
 | File | What |
@@ -75,6 +76,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `return_search.py` | aggressive rotation (top 1 / 2 / 3 of 10 incl. QQQ, IWM; sectors), trend-timed QQQ / SPY, timed swan factor |
 | `swan_window.py` | which past swans the score uses, and whether swans add anything over market beta |
 | `stop_loss.py` | stock trailing stops (15% / 25%) and a D1 drawdown brake (10% / 15%) |
+| `trend_selection.py` | selection limited to stocks above their 200-day average / with positive 6-1 return; stop + no rebuy |
 | `live.py` | live use of D1: target holdings (core + 4 rotation tranches), orders from your holdings, signals / market / drift report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -704,6 +706,21 @@ None adopted.
 - Stock stops cut fast crashes (COVID −13% instead of −18%) but not slow ones. In 2008 the stopped names were bought back at each monthly rebuild and fell again, so the max DD does not improve.
 - The brake does lower the max DD, but it stays out after rebounds and costs 2.3%/yr since 2015.
 - D1's drawdown is already capped by its structure: half in rotation with a trend rule, plus bonds and gold.
+
+**Stops that do not buy back, and selecting only up-trend stocks** (`trend_selection.py`, fully invested in stocks, inside D1 70/15/15):
+
+| | sleeve alone: CAGR / Sharpe / max DD | D1: CAGR | D1 Sharpe 05–14 / 15–26 / ex-COVID | D1 max DD | D1 COVID |
+|---|---|---|---|---|---|
+| R1 (live) | 10.1% / 0.72 / 41% | 9.9% | 1.01 / 0.95 / 1.05 | 19.6% | −18% |
+| T1 lowest third among stocks above their 200-day average | 5.7% / 0.46 / 57% | 8.4% | 0.80 / 0.86 / 0.89 | 28.9% | −17% |
+| T2 T1 + 15% trailing stop | 6.0% / 0.51 / 55% | 8.5% | 0.82 / 0.89 / 0.90 | 28.2% | −12% |
+| T3 R1 + 15% stop, stopped names left out next month | 10.1% / 0.80 / 42% | 9.9% | 1.01 / 0.98 / 1.05 | 20.4% | −12% |
+| T4 lowest third among stocks with a positive 6-1 return | 7.0% / 0.53 / 50% | 8.8% | 0.90 / 0.84 / 0.94 | 23.1% | −18% |
+
+None adopted.
+- A trend filter at selection backfires. In a bear market almost nothing is above its 200-day average (down to one stock), so a fully invested sleeve becomes a handful of names, and T1 lost 52% in 2008.
+- Not buying back (T3) gives the best stock-level result: Sharpe 0.80 instead of 0.72, and COVID −18% instead of −33%. Inside D1 it is a wash: Sharpe +0.02, max DD +0.8 points.
+- Stops catch stock-specific falls. In 2008 the replacements fell too, so a market-wide crash has to be handled by the allocation (rotation, bonds, gold), not by stops.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
