@@ -41,6 +41,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/swan_window.py [build]       # which past swans to use: last 3 / 5 / all / severe / recency / median
 .venv/bin/python v2/stop_loss.py                 # trailing stops per stock and a drawdown brake on D1
 .venv/bin/python v2/trend_selection.py [build]   # select only up-trend stocks; stops without buying back
+.venv/bin/python v2/cash_rules.py                # cash instead of stocks in bad regimes / for down-trend picks
 ```
 
 | File | What |
@@ -77,6 +78,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `swan_window.py` | which past swans the score uses, and whether swans add anything over market beta |
 | `stop_loss.py` | stock trailing stops (15% / 25%) and a D1 drawdown brake (10% / 15%) |
 | `trend_selection.py` | selection limited to stocks above their 200-day average / with positive 6-1 return; stop + no rebuy |
+| `cash_rules.py` | core stocks to T-bills in a bad regime (E1 / E2); per-stock cash slot for down-trend picks (E3 / E4) |
 | `live.py` | live use of D1: target holdings (core + 4 rotation tranches), orders from your holdings, signals / market / drift report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -721,6 +723,20 @@ None adopted.
 - A trend filter at selection backfires. In a bear market almost nothing is above its 200-day average (down to one stock), so a fully invested sleeve becomes a handful of names, and T1 lost 52% in 2008.
 - Not buying back (T3) gives the best stock-level result: Sharpe 0.80 instead of 0.72, and COVID −18% instead of −33%. Inside D1 it is a wash: Sharpe +0.02, max DD +0.8 points.
 - Stops catch stock-specific falls. In 2008 the replacements fell too, so a market-wide crash has to be handled by the allocation (rotation, bonds, gold), not by stops.
+
+**Cash allowed instead of stocks** (`cash_rules.py`, inside D1 70/15/15, regime decisions in 4 tranches):
+
+| | CAGR | Sharpe | Sharpe 05–14 / 15–26 / ex-COVID | max DD 05–14 / 15–26 | GFC | COVID | core stocks in cash |
+|---|---|---|---|---|---|---|---|
+| **D1 (live)** | **9.9%** | 0.97 | 1.01 / 0.95 / 1.05 | 19.6% / 18.8% | −10% | −18% | – |
+| E1 core stocks to T-bills while SPY < 10-month average | 9.1% | 0.96 | 1.04 / 0.89 / 1.05 | | +5% | −13% | 23% of months |
+| **E2 only while SPY < 10-month average AND > 10% below its 1-year high** | 9.4% | 0.97 | 1.05 / 0.91 / 1.06 | **12.6% / 16.3%** | +3% | −13% | 16% of months, ~1 switch a year |
+| E3 a pick below its 200-day average is not bought (its slot in T-bills) | 8.3% | 0.91 | 0.99 / 0.84 / 0.97 | max DD 13.8% | +1% | −11% | 30% of the sleeve |
+| E4 the same with a negative 6-1 return | 8.3% | 0.91 | 0.98 / 0.84 / 0.98 | max DD 16.9% | 0% | −15% | 32% |
+
+- By the adoption rule, none passes: each loses Sharpe in 2015–26.
+- E2 is a genuine option. The max DD falls from 19.6% to 16.3% in both sub-periods, the overall Sharpe stays the same, and it costs ~0.5%/yr (1.0%/yr since 2015). It is stable across the 10-month average (8 / 10 / 12) and the threshold (8 / 10 / 12%): max DD 16.3% everywhere, CAGR 9.3–9.7%.
+- Per-stock cash slots (E3 / E4) cut the drawdown more but cost 1.6%/yr. About a third of the sleeve sits in cash even in bull years.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
