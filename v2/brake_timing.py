@@ -37,6 +37,16 @@ def signals(spy_ret):
     return below, deep
 
 
+def sticky_state(spy_ret):
+    """BDS: braked once below the 10-month average and > DD below the 1-year high; released above the average."""
+    below, deep = signals(spy_ret)
+    out, on = [], False
+    for b, c in zip(below, below & deep):
+        on = bool(c or (on and b))
+        out.append(on)
+    return pd.Series(out, index=spy_ret.index)
+
+
 def tranche_state(cond, index):
     days = {0: list(S.A.month_ends(index))} | {o: SR.mid_month(index, o) for o in (5, 10, 15)}
     out = []
@@ -59,12 +69,8 @@ if __name__ == "__main__":
     d1 = pd.concat([c["D1"] for c in copies], axis=1).mean(axis=1)
     below, deep = signals(r.SPY)
     cond = below & deep
-    sticky, on = [], False
-    for b, c in zip(below, cond):
-        on = c or (on and b)
-        sticky.append(float(on))
     states = {"B4 4 tranches (live)": tranche_state(cond, r.index), "BD daily": cond.astype(float),
-              "BDS daily, sticky": pd.Series(sticky, index=r.index)}
+              "BDS daily, sticky": sticky_state(r.SPY).astype(float)}
     r1, cash = r.R1.fillna(0), r.cash
     runs = {"D1 no brake": d1}
     for k, st in states.items():
