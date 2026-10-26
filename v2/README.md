@@ -44,6 +44,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/cash_rules.py                # cash instead of stocks in bad regimes / for down-trend picks
 .venv/bin/python v2/brake_timing.py              # E2 brake checked in 4 tranches vs every day
 .venv/bin/python v2/signal_search.py             # stock stop + daily buy-back, breadth brake, volatility brake
+.venv/bin/python v2/signal_more.py               # rotation daily exit, staged buy-back after a brake, combinations
 ```
 
 | File | What |
@@ -83,6 +84,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `cash_rules.py` | core stocks to T-bills in a bad regime (E1 / E2); per-stock cash slot for down-trend picks (E3 / E4) |
 | `brake_timing.py` | the E2 brake checked on the 4 tranche days vs every close (same day / next day / sticky) |
 | `signal_search.py` | stock stop with daily buy-back, market-breadth brake, volatility brake (+ robustness grid) |
+| `signal_more.py` | rotation with a daily exit below the 10-month average, staged buy-back after a brake, V1 + stock stop |
 | `live.py` | live use of D1 + E2 brake: target holdings (core + 4 rotation tranches), orders from your holdings, signals / brake / market / drift report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -773,6 +775,25 @@ None adopted.
 - **W1 / W2:** breadth reacts earlier but whipsaws in 2015–26.
 - **V1 passes the adoption rule:** better Sharpe in both halves and without COVID, with a lower max DD. It also trades less (1 switch a year) and is braked less often. It reacts to fast crashes (COVID −9%) but not to slow bears (2022 −9% vs −6%).
 - Robustness grid: window 10 / 20 / 40 days × on/off 25/15, 30/20, 35/25, 30/25 × same-day or next-day fill. V1 beats the live brake on both Sharpe and max DD in 17 of 24 settings; max DD 12.6–15.8%, CAGR 8.8–10.1%. Most of the failures use the twitchy 10-day window or a narrow 30/25 band.
+
+**The rest of the signal list** (`signal_more.py`). D1 here is half core + half rotation, each in 4 tranches, mixed daily; this base comes within 0.1%/yr of the exact D1.
+
+| | CAGR | Sharpe | Sharpe 05–14 / 15–26 / ex-COVID | max DD | GFC | COVID | 2022 |
+|---|---|---|---|---|---|---|---|
+| no brake | 10.0% | 0.98 | 1.01 / 0.95 / 1.05 | 19.6% | −10% | −18% | −9% |
+| live brake | 9.2% | 0.97 | 1.00 / 0.95 / 1.03 | 14.5% | +5% | −10% | −6% |
+| V1 vol brake | 9.5% | 0.99 | 1.01 / 0.97 / 1.04 | 13.2% | +2% | −9% | −9% |
+| R4 rotation sells on any close below its 10-month average, no brake | 9.7% | 0.99 | 1.01 / 0.98 / 1.05 | 16.6% | −7% | −16% | −9% |
+| R4 + live brake | 8.8% | 0.96 | 0.98 / 0.96 / 1.01 | 13.5% | +9% | −9% | −6% |
+| **R4 + V1** | 9.2% | 0.99 | 1.00 / 0.98 / 1.03 | **11.5%** | +5% | −7% | −9% |
+| E5 live brake, buy back in 4 steps over 20 days | 9.4% | 1.00 | 1.05 / 0.95 / 1.05 | 13.4% | +6% | −9% | −7% |
+| E5 V1, staged | 9.3% | 0.97 | 1.02 / 0.93 / 1.02 | 13.2% | | | |
+| C1 V1 + stock stop with daily buy-back | 9.4% | 0.98 | 1.01 / 0.96 / 1.04 | 12.9% | | | |
+
+- **V1** is again better than the live brake on every rule.
+- **R4 + V1** has the lowest max DD found so far (11.5%) for ~0.3%/yr less than V1 alone. Its 2005–14 and ex-COVID Sharpe are slightly lower, so by the rule it is a trade-off, not an improvement. It has not been through a robustness grid.
+- **Staged buy-back** helps the live brake (its re-entries were badly timed) but not V1.
+- **Stock stops** add nothing once V1 is there.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
