@@ -95,6 +95,15 @@ def hysteresis(x, on, off, below=True):
     return pd.Series(out, index=x.index)
 
 
+VOL_WINDOW, VOL_ON, VOL_OFF = 20, 0.30, 0.20
+
+
+def vol_brake(spy_ret):
+    """V1: on while SPY's 20-day realised vol (annualised) has gone above 30%, until it is back below 20%."""
+    vol = spy_ret.rolling(VOL_WINDOW).std() * np.sqrt(252)
+    return hysteresis(vol, VOL_ON, VOL_OFF, below=False)
+
+
 def d1(r, key):
     rot = S.rotation(SR.ROT)
     fns = {"D1": lambda d, h: S.fixed({key: .7, "IEF": .15, "GLD": .15})(d, h).mul(0.5).add(rot(d, h).mul(0.5), fill_value=0)}
@@ -114,7 +123,7 @@ if __name__ == "__main__":
     br = breadth(close).reindex(r.index).ffill()
     vol = r.SPY.rolling(20).std() * np.sqrt(252)
     w1 = hysteresis(br, 0.40, 0.50).astype(float)
-    v1 = hysteresis(vol, 0.30, 0.20, below=False).astype(float)
+    v1 = vol_brake(r.SPY).astype(float)
     base = d1(r, "R1")
     states = {"live: daily brake": live, "W1 breadth brake": w1, "W2 live OR breadth": np.maximum(live, w1),
               "V1 volatility brake": v1, "V2 live OR volatility": np.maximum(live, v1)}

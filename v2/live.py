@@ -5,9 +5,9 @@
   half the money: rotation, in 4 equal tranches. Each tranche holds the 3 strongest of SPY, EFA, EEM, VNQ, DBC, IEF,
                   TLT, GLD by mean 3/6/12-month return, an asset only while above its 10-month average (else cash).
                   Tranche 0 is decided at each month end, tranches 5 / 10 / 15 that many trading days into the month.
-  brake (brake_timing.py, BDS): checked at every close. Once SPY is below its 10-month average AND more than 10%
-                  below its 1-year high, all the core's stocks are held in cash; they are bought back only when SPY
-                  closes above its 10-month average again (--no-brake turns it off). IEF and GLD are not affected.
+  brake (signal_search.py, V1): checked at every close. Once SPY's 20-day realised volatility (annualised) closes above
+                  30%, all the core's stocks are held in cash; they are bought back once it closes below 20% again
+                  (--no-brake turns it off). IEF and GLD are not affected.
 
     python data/update_data.py                                          # 1. bring the data up to date
     python v2/live.py target --capital 20000 [--stocks 30] [--whole] [--core-stocks 0.7]   # 2. target holdings
@@ -22,8 +22,8 @@ and `orders` too. `report` prints the next dates. Everything is saved in live/ (
 
 holdings.csv: two columns, ticker,shares (fractional allowed). Use CASH for cash in dollars: the rotation's cash slot
 is meant to sit in the broker's money-market sweep (or a T-bill ETF such as SGOV / BIL, entered as CASH).
-Backtest reference (2005-2026, 4 tranches): with the daily brake (brake_timing.py, core 70/15/15) 9.1%/yr, max
-drawdown 14.7%, Sharpe 0.96, 2.6 switches a year. Without it (core_search.py): core 70/15/15 9.9% / 19.6% / -5.4%; core 50/25/25
+Backtest reference (2005-2026, 4 tranches): with the volatility brake (signal_search.py, core 70/15/15) 9.4%/yr, max
+drawdown 13.4%, Sharpe 0.98, 1 switch a year. Without it (core_search.py): core 70/15/15 9.9% / 19.6% / -5.4%; core 50/25/25
 9.6% / 17.5%; core 100/0/0 10.4% / 25.0%.
 """
 import argparse
@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 
 import allocation as A
-import brake_timing as BT
+import signal_search as SG
 import components as C
 import defense as DF
 import risk_model as RM
@@ -54,7 +54,9 @@ def data_end():
 
 
 def etf_prices():
-    return pd.read_csv(swan_beta.DATA / "prices/etf_close.csv.gz", index_col=0, parse_dates=True)
+    """ETF closes up to the stock data's last day, so every signal is as of the same close."""
+    etf = pd.read_csv(swan_beta.DATA / "prices/etf_close.csv.gz", index_col=0, parse_dates=True)
+    return etf.loc[:data_end()]
 
 
 def last_prices(tickers):
@@ -107,8 +109,12 @@ def next_days(last):
 
 
 def brake_state(r):
-    """Daily brake state (True = core stocks in cash) up to the last close: brake_timing.sticky_state on SPY."""
-    return BT.sticky_state(r["SPY"])
+    """Daily brake state (True = core stocks in cash) up to the last close: signal_search.vol_brake on SPY."""
+    st = SG.vol_brake(r["SPY"])
+    vol = r["SPY"].iloc[-SG.VOL_WINDOW:]
+    if vol.isna().any():   # a missing day would freeze the brake: stop rather than trade on a stale signal
+        raise SystemExit(f"SPY returns missing on {list(vol.index[vol.isna()].date)}: run data/update_data.py again")
+    return st
 
 
 def tranches(r):
@@ -212,11 +218,11 @@ def report(holdings_file=None, core_stocks=CORE_STOCKS, brake=True):
     sig = pd.DataFrame({"score (3/6/12m)": {a: R.score(a) for a in ROT}, "above 10m avg": {a: R.up(a) for a in ROT}})
     print("\nrotation signals today (top 3 by score, held only if above the average):")
     print(sig.sort_values("score (3/6/12m)", ascending=False).to_string(float_format=lambda x: f"{x:+.1%}"))
-    below, deep = BT.signals(r["SPY"])
+    vol = r["SPY"].rolling(SG.VOL_WINDOW).std().iloc[-1] * np.sqrt(252)
     st = brake_state(r)
-    print(f"\nbrake (checked every close): SPY {'BELOW' if below.iloc[-1] else 'above'} its 10-month average, "
-          f"{'more' if deep.iloc[-1] else 'less'} than {BT.DD:.0%} below its 1-year high -> core stocks "
-          f"{'in CASH' if st.iloc[-1] else 'held'}" + ("" if brake else " (but --no-brake: held)"))
+    print(f"\nbrake (checked every close): SPY {SG.VOL_WINDOW}-day volatility {vol:.0%} (on above {SG.VOL_ON:.0%}, "
+          f"off below {SG.VOL_OFF:.0%}) -> core stocks {'in CASH' if st.iloc[-1] else 'held'}"
+          + ("" if brake else " (but --no-brake: held)"))
     if st.iloc[-1] != st.iloc[-2]:
         print(f"  <-- the brake {'went ON' if st.iloc[-1] else 'went OFF'} at this close: run target and orders now")
     w, s, tr = weights(t, core_stocks=core_stocks, brake=brake)
@@ -244,7 +250,7 @@ def report(holdings_file=None, core_stocks=CORE_STOCKS, brake=True):
 
     print("\nnext decision days (run after the close, trade the next day): " + ", ".join(
         f"{'month end' if o == 0 else f'day {o}'} {d.date()}" for o, d in sorted(next_days(data_end()).items(), key=lambda x: x[1])))
-    ref = {(0.7, True): "9.1%/yr, max drawdown 14.7%", (0.5, False): "9.6%/yr, max drawdown 17.5%",
+    ref = {(0.7, True): "9.4%/yr, max drawdown 13.4%", (0.5, False): "9.6%/yr, max drawdown 17.5%",
            (0.7, False): "9.9%/yr, max drawdown 19.6%", (1.0, False): "10.4%/yr, max drawdown 25.0%"}
     print(f"backtest reference, core stocks {core_stocks:.0%}, brake {'on' if brake else 'off'}: "
           + ref.get((core_stocks, brake), "not backtested"))
@@ -263,8 +269,8 @@ def check():
     print("decision days ok:", {o: d.date() for o, d in mar.items()})
     r = rotation_returns()
     st = brake_state(r)
-    on = {d: bool(st.loc[d]) for d in ["2008-10-31", "2020-03-31", "2022-06-30", "2021-06-30", "2024-06-28"]}
-    assert on["2008-10-31"] and on["2020-03-31"] and on["2022-06-30"] and not on["2021-06-30"] and not on["2024-06-28"], on
+    on = {d: bool(st.loc[d]) for d in ["2008-10-31", "2020-03-31", "2021-06-30", "2024-06-28"]}
+    assert on["2008-10-31"] and on["2020-03-31"] and not on["2021-06-30"] and not on["2024-06-28"], on
     print("brake ok:", on)
 
 
@@ -279,7 +285,7 @@ if __name__ == "__main__":
     ap.add_argument("--min-trade", type=float, default=50.0)
     ap.add_argument("--core-stocks", type=float, default=CORE_STOCKS,
                     help="stock share of the core (default 0.7; 0.5 and 1.0 also backtested), rest IEF / GLD equally")
-    ap.add_argument("--no-brake", action="store_true", help="keep the core's stocks in a bad regime (D1 without E2)")
+    ap.add_argument("--no-brake", action="store_true", help="keep the core's stocks when volatility is high (D1 without the brake)")
     a = ap.parse_args()
     if a.command == "target":
         if not a.capital:
