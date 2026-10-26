@@ -43,6 +43,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/trend_selection.py [build]   # select only up-trend stocks; stops without buying back
 .venv/bin/python v2/cash_rules.py                # cash instead of stocks in bad regimes / for down-trend picks
 .venv/bin/python v2/brake_timing.py              # E2 brake checked in 4 tranches vs every day
+.venv/bin/python v2/signal_search.py             # stock stop + daily buy-back, breadth brake, volatility brake
 ```
 
 | File | What |
@@ -81,6 +82,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `trend_selection.py` | selection limited to stocks above their 200-day average / with positive 6-1 return; stop + no rebuy |
 | `cash_rules.py` | core stocks to T-bills in a bad regime (E1 / E2); per-stock cash slot for down-trend picks (E3 / E4) |
 | `brake_timing.py` | the E2 brake checked on the 4 tranche days vs every close (same day / next day / sticky) |
+| `signal_search.py` | stock stop with daily buy-back, market-breadth brake, volatility brake (+ robustness grid) |
 | `live.py` | live use of D1 + E2 brake: target holdings (core + 4 rotation tranches), orders from your holdings, signals / brake / market / drift report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -754,6 +756,23 @@ None adopted.
 - Checking every day reacts sooner. The max DD falls by another ~2 points (16.5% → 14.7%), COVID by 3 points.
 - The cost is ~0.2–0.3%/yr and 3–4 times as many switches, with the same overall Sharpe. The day-late version scores a lower max DD than the same-day one, so a point or so of the difference is chance.
 - The sticky version halves the whipsaws at the same drawdown.
+
+**More buy / sell signals** (`signal_search.py`). All are applied to D1 70/15/15 with the rotation in 4 tranches, against the live daily brake, using the same overlay as `brake_timing.py`:
+
+| | CAGR | Sharpe | Sharpe 05–14 / 15–26 / ex-COVID | max DD | GFC | COVID | 2022 | switches per year | time braked |
+|---|---|---|---|---|---|---|---|---|---|
+| no brake | 9.9% | 0.97 | 1.01 / 0.95 / 1.05 | 19.6% | −10% | −18% | −9% | – | – |
+| live: daily trend + drawdown brake | 9.1% | 0.96 | 0.99 / 0.95 / 1.02 | 14.7% | +5% | −10% | −6% | 2.6 | 16% |
+| S1 stock stop 15% + buy back above the 50-day average, with the live brake | 9.1% | 0.96 | 1.00 / 0.94 / 1.02 | 14.5% | +5% | −11% | −6% | 61 stock stops | |
+| W1 breadth brake (% of members above their 200-day average: on < 40%, off > 50%) | 8.8% | 0.94 | 0.99 / 0.90 / 1.00 | 13.2% | +4% | −9% | −8% | 2.5 | 17% |
+| W2 live OR breadth | 8.6% | 0.92 | 0.96 / 0.89 / 0.98 | 13.7% | | | | 3.3 | 19% |
+| **V1 volatility brake (SPY 20-day vol: on > 30%, off < 20%)** | **9.4%** | **0.98** | **1.00 / 0.96 / 1.03** | **13.4%** | +1% | −9% | −9% | **1.0** | **10%** |
+| V2 live OR volatility | 9.3% | 0.99 | 1.05 / 0.94 / 1.05 | 13.8% | | | | 1.8 | 17% |
+
+- **S1:** buying back stopped stocks daily lifts the sleeve on its own (Sharpe 0.72 → 0.80). Inside D1 with the brake it changes nothing, because the brake already handles market-wide falls.
+- **W1 / W2:** breadth reacts earlier but whipsaws in 2015–26.
+- **V1 passes the adoption rule:** better Sharpe in both halves and without COVID, with a lower max DD. It also trades less (1 switch a year) and is braked less often. It reacts to fast crashes (COVID −9%) but not to slow bears (2022 −9% vs −6%).
+- Robustness grid: window 10 / 20 / 40 days × on/off 25/15, 30/20, 35/25, 30/25 × same-day or next-day fill. V1 beats the live brake on both Sharpe and max DD in 17 of 24 settings; max DD 12.6–15.8%, CAGR 8.8–10.1%. Most of the failures use the twitchy 10-day window or a narrow 30/25 band.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
