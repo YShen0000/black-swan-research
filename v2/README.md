@@ -567,7 +567,8 @@ Half the money is the **core**: R1 swan-beta sleeve 70% / IEF 15% / GLD 15% (fro
 .venv/bin/python v2/live.py check                                          #    self-check of the decision days
 ```
 
-- **When:** run 1–3 after the close on the last trading day of the month and on the 6th, 11th and 16th trading day. **On every other trading day**, update the data and run `report`: it prints the brake state, and when the brake switched at that close it says to run `target` and `orders`. Trade the next day. Live and backtest brake states agree on every day since 2005. Trade the next day. On each of those days one tranche changes, plus small drift trades. `report` prints the next dates.
+- **When:** run 1–3 after the close on the last trading day of the month and on the 6th, 11th and 16th trading day, and trade the next day. On each of those days one tranche changes, plus small drift trades; `report` prints the next dates.
+- **Brake, every other trading day:** update the data and run `report`. It prints the brake state; when the brake switched at that close, it says to run `target` and `orders`, and you trade the next day. Live and backtest brake states agree on every day since 2005.
 - **No state to keep:** every tranche is recomputed from the data as of its own latest decision day, so running `target` again on another day gives the same answer. Rotation signals were checked against the backtest: the weights are identical.
 - **Cash:** the rotation's cash slot (an asset below its average) goes in the `CASH` row. Keep it in the broker's money-market sweep or a T-bill ETF (SGOV / BIL, entered as CASH).
 - **`holdings.csv`:** columns `ticker,shares` plus a `CASH` row in dollars. `orders` refuses to run if your holdings are worth more than 2% away from the target's capital. Adjustments under `--min-trade` ($50) are skipped, but opening or closing a position never is.
