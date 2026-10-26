@@ -5,6 +5,9 @@
   half the money: rotation, in 4 equal tranches. Each tranche holds the 3 strongest of SPY, EFA, EEM, VNQ, DBC, IEF,
                   TLT, GLD by mean 3/6/12-month return, an asset only while above its 10-month average (else cash).
                   Tranche 0 is decided at each month end, tranches 5 / 10 / 15 that many trading days into the month.
+  brake (E2, cash_rules.py): on each tranche's decision day, if SPY is below its 10-month average AND more than 10%
+                  below its 1-year high, that tranche's quarter of the core's stocks is held in cash instead
+                  (--no-brake turns it off). IEF and GLD in the core are not affected.
 
     python data/update_data.py                                          # 1. bring the data up to date
     python v2/live.py target --capital 20000 [--stocks 30] [--whole] [--core-stocks 0.7]   # 2. target holdings
@@ -18,8 +21,9 @@ trades. `report` prints the next dates. Everything is saved in live/ (git-ignore
 
 holdings.csv: two columns, ticker,shares (fractional allowed). Use CASH for cash in dollars: the rotation's cash slot
 is meant to sit in the broker's money-market sweep (or a T-bill ETF such as SGOV / BIL, entered as CASH).
-Backtest reference (2005-2026, 4 tranches, core_search.py): core 70/15/15 9.9%/yr, max drawdown 19.6%, worst year
--5.4%, Sharpe 0.97; core 50/25/25 9.6% / 17.5% / -5.9%; core 100/0/0 10.4% / 25.0% / -10.4%.
+Backtest reference (2005-2026, 4 tranches): with the brake (cash_rules.py, core 70/15/15) 9.4%/yr, max drawdown 16.3%,
+worst year -7.4%, Sharpe 0.97. Without it (core_search.py): core 70/15/15 9.9% / 19.6% / -5.4%; core 50/25/25
+9.6% / 17.5%; core 100/0/0 10.4% / 25.0%.
 """
 import argparse
 import datetime
@@ -41,6 +45,7 @@ ROT = ["SPY", "EFA", "EEM", "VNQ", "DBC", "IEF", "TLT", "GLD"]
 CORE_STOCKS = 0.7                   # rest of the core: IEF and GLD, equally
 OFFSETS = (0, 5, 10, 15)            # 0 = month end
 ROTATION_SHARE = 0.5
+BRAKE_DD = 0.10                     # E2 brake: SPY below its 10-month average and this far below its 1-year high
 
 
 def data_end():
@@ -100,24 +105,34 @@ def next_days(last):
     return out
 
 
+def bad_regime(r, d):
+    """The E2 brake on day d: SPY below its 10-month average and more than BRAKE_DD below its 1-year high."""
+    R = SS.Rules(r.loc[:d], d)
+    p = R.px["SPY"].dropna()
+    return bool(not R.up("SPY") and p.iloc[-1] < (1 - BRAKE_DD) * p.iloc[-252:].max())
+
+
 def tranches(r):
+    """Per tranche: (decision day, rotation weights, brake on)."""
     f = SS.rotation(ROT)
-    return {o: (d, f(d, r.loc[:d])) for o, d in tranche_days(r.index).items()}
+    return {o: (d, f(d, r.loc[:d]), bad_regime(r, d)) for o, d in tranche_days(r.index).items()}
 
 
-def weights(t, stocks=None, new_sleeve=False, core_stocks=CORE_STOCKS):
+def weights(t, stocks=None, new_sleeve=False, core_stocks=CORE_STOCKS, brake=True):
     s = sleeve(t, stocks, new_sleeve)
-    bonds_gold = (1 - core_stocks) / 2
-    core = pd.concat([s * core_stocks, pd.Series({"IEF": bonds_gold, "GLD": bonds_gold})]) * (1 - ROTATION_SHARE)
     tr = tranches(rotation_returns())
-    rot = sum(w for _, w in tr.values()) / len(tr) * ROTATION_SHARE
+    held = np.mean([0.0 if brake and bad else 1.0 for _, _, bad in tr.values()])   # share of core stocks held
+    bonds_gold = (1 - core_stocks) / 2
+    core = pd.concat([s * core_stocks * held, pd.Series({"IEF": bonds_gold, "GLD": bonds_gold,
+                                                          "cash": core_stocks * (1 - held)})]) * (1 - ROTATION_SHARE)
+    rot = sum(w for _, w, _ in tr.values()) / len(tr) * ROTATION_SHARE
     w = core.add(rot, fill_value=0)
     return w[w > 0], s, tr
 
 
-def target(capital, stocks=None, whole=False, new_sleeve=False, core_stocks=CORE_STOCKS):
+def target(capital, stocks=None, whole=False, new_sleeve=False, core_stocks=CORE_STOCKS, brake=True):
     t = data_end() + datetime.timedelta(days=1)
-    w, s, tr = weights(t, stocks, new_sleeve, core_stocks)
+    w, s, tr = weights(t, stocks, new_sleeve, core_stocks, brake)
     w = w.drop("cash", errors="ignore")
     px = last_prices(w.index)
     shares = capital * w / px
@@ -133,19 +148,20 @@ def target(capital, stocks=None, whole=False, new_sleeve=False, core_stocks=CORE
     path = LIVE / f"target_{t:%Y-%m-%d}.csv"
     out.to_csv(path, float_format="%.6g")
     print(f"prices as of {data_end().date()} | sleeve {month(t)} ({len(s)} stocks) | saved {path}")
-    print_tranches(tr)
+    print_tranches(tr, brake)
     etfs = out.drop(s.index, errors="ignore")
     print(f"\nstocks {out.weight.reindex(s.index).sum():.1%} of the money; ETFs and cash:")
     print(etfs.sort_values("value", ascending=False).round(4).to_string())
     return out
 
 
-def print_tranches(tr):
-    print("rotation tranches (each 12.5% of the money):")
-    for o, (d, w) in tr.items():
+def print_tranches(tr, brake=True):
+    print("tranches (rotation 12.5% of the money each; core stocks a quarter each):")
+    for o, (d, w, bad) in tr.items():
         name = "month end" if o == 0 else f"day {o}"
         picks = ", ".join(f"{a} {v:.0%}" for a, v in w[w > 0].sort_values(ascending=False).items())
-        print(f"  {name:9s} decided {d.date()}: {picks}")
+        core = "CASH (brake)" if brake and bad else "held" + (" (brake off; regime bad)" if bad else "")
+        print(f"  {name:9s} decided {d.date()}: rotation {picks} | core stocks {core}")
 
 
 def latest_target():
@@ -177,7 +193,7 @@ def orders(holdings_file, min_trade=50.0):
     print(o.round(4).to_string())
 
 
-def report(holdings_file=None, core_stocks=CORE_STOCKS):
+def report(holdings_file=None, core_stocks=CORE_STOCKS, brake=True):
     t = data_end() + datetime.timedelta(days=1)
     close = swan_beta.load_prices(U)
     print(f"data through {data_end().date()}")
@@ -196,8 +212,11 @@ def report(holdings_file=None, core_stocks=CORE_STOCKS):
     sig = pd.DataFrame({"score (3/6/12m)": {a: R.score(a) for a in ROT}, "above 10m avg": {a: R.up(a) for a in ROT}})
     print("\nrotation signals today (top 3 by score, held only if above the average):")
     print(sig.sort_values("score (3/6/12m)", ascending=False).to_string(float_format=lambda x: f"{x:+.1%}"))
-    w, s, tr = weights(t, core_stocks=core_stocks)
-    print_tranches(tr)
+    p = R.px["SPY"].dropna()
+    print(f"\nbrake check: SPY {'above' if R.up('SPY') else 'BELOW'} its 10-month average, "
+          f"{1 - p.iloc[-1] / p.iloc[-252:].max():.1%} below its 1-year high (brake when below the average and > {BRAKE_DD:.0%})")
+    w, s, tr = weights(t, core_stocks=core_stocks, brake=brake)
+    print_tranches(tr, brake)
 
     sec = s.groupby(C.sectors()(s.index)).sum().sort_values(ascending=False)
     print(f"\nsleeve: {len(s)} stocks, top sectors " + ", ".join(f"{k} {v:.0%}" for k, v in sec.head(3).items()))
@@ -221,8 +240,10 @@ def report(holdings_file=None, core_stocks=CORE_STOCKS):
 
     print("\nnext decision days (run after the close, trade the next day): " + ", ".join(
         f"{'month end' if o == 0 else f'day {o}'} {d.date()}" for o, d in sorted(next_days(data_end()).items(), key=lambda x: x[1])))
-    ref = {0.5: "9.6%/yr, max drawdown 17.5%", 0.7: "9.9%/yr, max drawdown 19.6%", 1.0: "10.4%/yr, max drawdown 25.0%"}
-    print(f"backtest reference, core stocks {core_stocks:.0%}: " + ref.get(core_stocks, "not backtested (50 / 70 / 100% are)"))
+    ref = {(0.7, True): "9.4%/yr, max drawdown 16.3%", (0.5, False): "9.6%/yr, max drawdown 17.5%",
+           (0.7, False): "9.9%/yr, max drawdown 19.6%", (1.0, False): "10.4%/yr, max drawdown 25.0%"}
+    print(f"backtest reference, core stocks {core_stocks:.0%}, brake {'on' if brake else 'off'}: "
+          + ref.get((core_stocks, brake), "not backtested"))
 
 
 def check():
@@ -236,6 +257,10 @@ def check():
     assert mar[0] == pd.Timestamp("2020-02-28") and mar[5] == idx[(idx.to_period("M") == "2020-03")][5], mar
     assert mar[10] == idx[(idx.to_period("M") == "2020-02")][10], mar
     print("decision days ok:", {o: d.date() for o, d in mar.items()})
+    r = rotation_returns()
+    on = {d: bad_regime(r, pd.Timestamp(d)) for d in ["2008-10-31", "2020-03-31", "2022-06-30", "2021-06-30", "2025-04-30"]}
+    assert on["2008-10-31"] and on["2020-03-31"] and on["2022-06-30"] and not on["2021-06-30"], on
+    print("brake ok:", on)
 
 
 if __name__ == "__main__":
@@ -249,14 +274,15 @@ if __name__ == "__main__":
     ap.add_argument("--min-trade", type=float, default=50.0)
     ap.add_argument("--core-stocks", type=float, default=CORE_STOCKS,
                     help="stock share of the core (default 0.7; 0.5 and 1.0 also backtested), rest IEF / GLD equally")
+    ap.add_argument("--no-brake", action="store_true", help="keep the core's stocks in a bad regime (D1 without E2)")
     a = ap.parse_args()
     if a.command == "target":
         if not a.capital:
             raise SystemExit("--capital is required")
-        target(a.capital, a.stocks, a.whole, a.new_sleeve, a.core_stocks)
+        target(a.capital, a.stocks, a.whole, a.new_sleeve, a.core_stocks, not a.no_brake)
     elif a.command == "orders":
         orders(a.holdings or LIVE / "holdings.csv", a.min_trade)
     elif a.command == "check":
         check()
     else:
-        report(a.holdings, a.core_stocks)
+        report(a.holdings, a.core_stocks, not a.no_brake)

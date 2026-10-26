@@ -79,7 +79,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `stop_loss.py` | stock trailing stops (15% / 25%) and a D1 drawdown brake (10% / 15%) |
 | `trend_selection.py` | selection limited to stocks above their 200-day average / with positive 6-1 return; stop + no rebuy |
 | `cash_rules.py` | core stocks to T-bills in a bad regime (E1 / E2); per-stock cash slot for down-trend picks (E3 / E4) |
-| `live.py` | live use of D1: target holdings (core + 4 rotation tranches), orders from your holdings, signals / market / drift report |
+| `live.py` | live use of D1 + E2 brake: target holdings (core + 4 rotation tranches), orders from your holdings, signals / brake / market / drift report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
 
@@ -553,7 +553,7 @@ Stock momentum does not beat the swan sleeve, and trend filters cut drawdowns bu
 
 ## Live strategy (from 2026-10-25): D1
 
-Half the money is the **core**: R1 swan-beta sleeve 70% / IEF 15% / GLD 15% (from 2026-10-26; 50/25/25 before), with R1 rebuilt and the core reset monthly. `--core-stocks` sets the stock share, and the rest is split equally between IEF and GLD. The other half is the **rotation** C3, in 4 equal tranches of 12.5% each. Each tranche holds the 3 strongest of SPY, EFA, EEM, VNQ, DBC, IEF, TLT and GLD by mean 3/6/12-month return, each only while above its 10-month average (else cash). The tranches are decided at the month end and 5, 10 and 15 trading days in. Backtest (4 tranches, 2005–26, `core_search.py`): 9.9%/yr, max DD 19.6%, worst year −5.4%, Sharpe 0.97, about 65% of the money in equity on average. With `--core-stocks 0.5` it is 9.6% / 17.5%; with 1.0, 10.4% / 25%.
+Half the money is the **core**: R1 swan-beta sleeve 70% / IEF 15% / GLD 15% (from 2026-10-26; 50/25/25 before), with R1 rebuilt and the core reset monthly. `--core-stocks` sets the stock share, and the rest is split equally between IEF and GLD. The other half is the **rotation** C3, in 4 equal tranches of 12.5% each. Each tranche holds the 3 strongest of SPY, EFA, EEM, VNQ, DBC, IEF, TLT and GLD by mean 3/6/12-month return, each only while above its 10-month average (else cash). The tranches are decided at the month end and 5, 10 and 15 trading days in. **Brake (E2, from 2026-10-26):** on each tranche's decision day, if SPY is below its 10-month average and more than 10% below its 1-year high, that tranche's quarter of the core's stocks is held in cash. IEF and GLD are not affected; `--no-brake` turns it off. Backtest (4 tranches, 2005–26, `cash_rules.py`): 9.4%/yr, max DD 16.3%, worst year −7.4%, Sharpe 0.97. Without the brake (`core_search.py`) it is 9.9% / 19.6%; with `--core-stocks 0.5` 9.6% / 17.5%, and 1.0 gives 10.4% / 25%.
 
 `v2/live.py` writes everything to `live/`, which is git-ignored because it holds your positions:
 
@@ -565,7 +565,7 @@ Half the money is the **core**: R1 swan-beta sleeve 70% / IEF 15% / GLD 15% (fro
 .venv/bin/python v2/live.py check                                          #    self-check of the decision days
 ```
 
-- **When:** run 1–3 after the close on the last trading day of the month and on the 6th, 11th and 16th trading day. Trade the next day. On each of those days one tranche changes, plus small drift trades. `report` prints the next dates.
+- **When:** run 1–3 after the close on the last trading day of the month and on the 6th, 11th and 16th trading day. `target` and `report` show, per tranche, the rotation picks and whether the brake holds that tranche's core stocks in cash; `report` also prints the brake check (SPY vs its 10-month average, drawdown from the 1-year high). Trade the next day. On each of those days one tranche changes, plus small drift trades. `report` prints the next dates.
 - **No state to keep:** every tranche is recomputed from the data as of its own latest decision day, so running `target` again on another day gives the same answer. Rotation signals were checked against the backtest: the weights are identical.
 - **Cash:** the rotation's cash slot (an asset below its average) goes in the `CASH` row. Keep it in the broker's money-market sweep or a T-bill ETF (SGOV / BIL, entered as CASH).
 - **`holdings.csv`:** columns `ticker,shares` plus a `CASH` row in dollars. `orders` refuses to run if your holdings are worth more than 2% away from the target's capital. Adjustments under `--min-trade` ($50) are skipped, but opening or closing a position never is.
