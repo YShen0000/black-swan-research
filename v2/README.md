@@ -42,6 +42,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python v2/stop_loss.py                 # trailing stops per stock and a drawdown brake on D1
 .venv/bin/python v2/trend_selection.py [build]   # select only up-trend stocks; stops without buying back
 .venv/bin/python v2/cash_rules.py                # cash instead of stocks in bad regimes / for down-trend picks
+.venv/bin/python v2/brake_timing.py              # E2 brake checked in 4 tranches vs every day
 ```
 
 | File | What |
@@ -79,6 +80,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `stop_loss.py` | stock trailing stops (15% / 25%) and a D1 drawdown brake (10% / 15%) |
 | `trend_selection.py` | selection limited to stocks above their 200-day average / with positive 6-1 return; stop + no rebuy |
 | `cash_rules.py` | core stocks to T-bills in a bad regime (E1 / E2); per-stock cash slot for down-trend picks (E3 / E4) |
+| `brake_timing.py` | the E2 brake checked on the 4 tranche days vs every close (same day / next day / sticky) |
 | `live.py` | live use of D1 + E2 brake: target holdings (core + 4 rotation tranches), orders from your holdings, signals / brake / market / drift report |
 
 ## Baseline: Swan9 from Swan4–Swan8, S&P 100, K-means N=7
@@ -737,6 +739,20 @@ None adopted.
 - By the adoption rule, none passes: each loses Sharpe in 2015–26.
 - E2 is a genuine option. The max DD falls from 19.6% to 16.3% in both sub-periods, the overall Sharpe stays the same, and it costs ~0.5%/yr (1.0%/yr since 2015). It is stable across the 10-month average (8 / 10 / 12) and the threshold (8 / 10 / 12%): max DD 16.3% everywhere, CAGR 9.3–9.7%.
 - Per-stock cash slots (E3 / E4) cut the drawdown more but cost 1.6%/yr. About a third of the sleeve sits in cash even in bull years.
+
+**How often to check the brake** (`brake_timing.py`). Every variant uses the same overlay on D1 70/15/15. Only daily closes are available, so intraday stops cannot be tested.
+
+| | CAGR | Sharpe | Sharpe 05–14 / 15–26 / ex-COVID | max DD | GFC | COVID | 2022 | switches per year |
+|---|---|---|---|---|---|---|---|---|
+| no brake | 9.9% | 0.97 | 1.01 / 0.95 / 1.05 | 19.6% | −10% | −18% | −9% | – |
+| **B4 4 tranches (live)** | 9.3% | 0.97 | 1.04 / 0.90 / 1.05 | 16.5% | +2% | −13% | −8% | 1.0 (in quarters) |
+| BD every close | 9.0% | 0.95 | 0.95 / 0.95 / 1.01 | 14.7% | +1% | −10% | −6% | 4.4 |
+| BD2 every close, traded a day late | 9.0% | 0.95 | 0.99 / 0.92 / 1.00 | 13.3% | +3% | −9% | −7% | 4.4 |
+| BDS every close, sticky (released only above the 10-month average) | 9.1% | 0.96 | 0.99 / 0.95 / 1.02 | 14.7% | +5% | −10% | −6% | 2.6 |
+
+- Checking every day reacts sooner. The max DD falls by another ~2 points (16.5% → 14.7%), COVID by 3 points.
+- The cost is ~0.2–0.3%/yr and 3–4 times as many switches, with the same overall Sharpe. The day-late version scores a lower max DD than the same-day one, so a point or so of the difference is chance.
+- The sticky version halves the whipsaws at the same drawdown.
 
 ## Fixes compared with the original MVO2 notebook
 1. **P_fwd price basis.** optdata `P_fwd` is a dollar target quoted on the portfolio date. The original compared it with Yahoo prices adjusted back from *today*, so splits made R_fwd several times too large (NEE and AAPL ×4, WMT ×3, AMZN and GOOGL ×20) and the optimizer piled into them. v2 compares it with the nominal price of that day (`data/prices/nominal_close_SP100.csv`).
